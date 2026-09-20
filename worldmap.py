@@ -4,6 +4,8 @@ Each connected component uses real metatile coordinates. Detached interiors,
 floors and other maps are packed by area; those offsets do not imply travel links.
 Inconsistent source cycles use the fewest practical display breaks; every
 unsatisfied source connection and overlapping rectangle is exposed to the UI.
+The canonical Route103 cycle also has a guarded, reversible display projection;
+raw positions and source constraints remain available independently.
 """
 from collections import Counter, deque
 import math
@@ -57,6 +59,105 @@ def _delta(direction, offset, source_size, target_size):
     if direction == 'right':
         return source_size[0], offset
     raise ValueError('Expected a cardinal map connection.')
+
+
+def _display_point(row, x, y):
+    """Project a source coordinate without changing its tile or event index."""
+    projection = row.get('projection')
+    if projection:
+        knots = projection['knots']
+        shift = knots[-1][1]
+        for (left, start), (right, end) in zip(knots, knots[1:]):
+            if x <= right:
+                shift = start + (end - start) * (x - left) / (right - left)
+                break
+        y += shift
+    return row['x'] + x, row['y'] + y
+
+
+def _projected_connection_matches(a, b, direction, offset):
+    """Check the whole shared edge, including every affine breakpoint."""
+    vertical_edge = direction in {'left', 'right'}
+    length_a = a['height'] if vertical_edge else a['width']
+    length_b = b['height'] if vertical_edge else b['width']
+    start, end = max(0, offset), min(length_a, offset + length_b)
+    if start >= end:
+        return False
+    samples = {start, end}
+    if not vertical_edge:
+        samples.update(x for x, _ in a.get('projection', {}).get('knots', []) if start < x < end)
+        samples.update(x + offset for x, _ in b.get('projection', {}).get('knots', []) if start < x + offset < end)
+    for value in samples:
+        if vertical_edge:
+            ax, bx = (a['width'], 0) if direction == 'right' else (0, b['width'])
+            p, q = _display_point(a, ax, value), _display_point(b, bx, value - offset)
+        else:
+            ay, by = (a['height'], 0) if direction == 'down' else (0, b['height'])
+            p, q = _display_point(a, value, ay), _display_point(b, value - offset, by)
+        if any(abs(left - right) > 1e-9 for left, right in zip(p, q)):
+            return False
+    return True
+
+
+def _add_display_adjustments(rows, maps, ids, conflicts):
+    """Resolve only Emerald's known cycle, and fail closed for custom geometry.
+
+    Route103 has room over its water for a small continuous vertical shear.
+    Its western land and Oldale boundary remain unshifted; the eastern land
+    shifts rigidly by two tiles to meet Route110. No source tile is added,
+    removed or reassigned. A changed connection or unsafe footprint disables
+    the adjustment and retains the ordinary unresolved-seam warning.
+    """
+    by_name = {row['name']: row for row in rows}
+    sizes = {'Route103': (80, 22), 'Route110': (40, 100), 'OldaleTown': (20, 20)}
+    if any(name not in by_name or (by_name[name]['width'], by_name[name]['height']) != size
+           for name, size in sizes.items()):
+        return []
+    seams = [seam for seam in conflicts if {seam['a'], seam['b']} == {'Route103', 'Route110'}]
+    if len(seams) != 1:
+        return []
+    seam = seams[0]
+    forward = (seam['a'], seam['b'], seam['direction'], seam['offset'], seam['delta'])
+    if forward not in [('Route103', 'Route110', 'right', -60, {'x': 0, 'y': 2}),
+                       ('Route110', 'Route103', 'left', 60, {'x': 0, 'y': -2})]:
+        return []
+    expected_edges = {('Route103', 'OldaleTown', 'down', 0), ('OldaleTown', 'Route103', 'up', 0),
+                      ('Route103', 'Route110', 'right', -60), ('Route110', 'Route103', 'left', 60)}
+    touching = []
+    for name, data in maps.items():
+        for connection in data.get('connections') or []:
+            target = ids.get(connection.get('map'))
+            direction = connection.get('direction')
+            if direction in OPPOSITE and 'Route103' in (name, target):
+                if type(connection.get('offset')) is not int:
+                    return []
+                touching.append((name, target, direction, connection.get('offset')))
+    # Counting also rejects duplicate records and new incoming one-way edges.
+    if len(touching) != len(expected_edges) or set(touching) != expected_edges:
+        return []
+    projection = {'kind': 'vertical-shear', 'knots': [[0, 0], [28, 0], [40, 2], [80, 2]]}
+    candidate = {**by_name['Route103'], 'projection': projection}
+    projected = {**by_name, 'Route103': candidate}
+    if not all(_projected_connection_matches(projected[a], projected[b], direction, offset)
+               for a, b, direction, offset in touching):
+        return []
+    # One overall AABB would falsely overlap Oldale below the unchanged west
+    # side. Bounds for each affine strip conservatively cover the real shape.
+    for (left, start), (right, end) in zip(projection['knots'], projection['knots'][1:]):
+        x0, x1 = candidate['x'] + left, candidate['x'] + right
+        y0, y1 = candidate['y'] + min(start, end), candidate['y'] + candidate['height'] + max(start, end)
+        for other in rows:
+            if other['name'] == 'Route103':
+                continue
+            width = min(x1, other['x'] + other['width']) - max(x0, other['x'])
+            height = min(y1, other['y'] + other['height']) - max(y0, other['y'])
+            if width > 0 and height > 0:
+                return []
+    by_name['Route103']['projection'] = projection
+    seam['display_resolved'] = True
+    return [{'map': 'Route103', 'neighbor': 'Route110', 'kind': projection['kind'],
+             'shift': {'x': 0, 'y': 2},
+             'description': 'Route103 uses a slight display projection across its water to align Route110. Source tiles, events and travel connections are unchanged.'}]
 
 
 def _improve_component_positions(names, positions, dimensions, maps, edges):
@@ -369,8 +470,11 @@ class WorldMap:
                                'is_outdoor': data.get('map_type') in OUTDOOR_TYPES or name in OUTDOOR_EXCEPTIONS,
                                'overlaps': sorted(map_overlaps[name]),
                                'preview_url': f'/api/world/maps/{name}/preview.png'})
-        if conflicts:
-            warnings.append(f'{len(conflicts)} map connection seams disagree around map cycles. The canvas reduces these display breaks while preserving town boundaries where possible; no source connections were changed.')
+        display_adjustments = _add_display_adjustments(result, maps, snapshot['ids'], conflicts)
+        unresolved = [seam for seam in conflicts if not seam.get('display_resolved')]
+        if unresolved:
+            warnings.append(f'{len(unresolved)} map connection seams disagree around map cycles. The canvas reduces these display breaks while preserving town boundaries where possible; no source connections were changed.')
+        warnings.extend(adjustment['description'] for adjustment in display_adjustments)
         if overlaps:
             warnings.append(f'{len(overlaps)} map rectangles overlap. Select the map you want to edit to bring its terrain forward.')
         if len(components) > 1:
@@ -379,4 +483,5 @@ class WorldMap:
         return {'revision': snapshot['revision'], 'maps': result, 'components': components, 'groups': groups,
                 'sections': sections, 'bounds': bounds,
                 'initial_bounds': components[0]['bounds'] if components else bounds,
-                'conflicts': conflicts, 'overlaps': overlaps, 'warnings': warnings}
+                'conflicts': conflicts, 'display_adjustments': display_adjustments,
+                'overlaps': overlaps, 'warnings': warnings}

@@ -1,10 +1,12 @@
 """Geometry, area organization and coverage tests for the all-map terrain canvas."""
 import json
+from copy import deepcopy
 from pathlib import Path
 import tempfile
 import unittest
 
-from worldmap import WorldMap, OUTDOOR_TYPES, OUTDOOR_EXCEPTIONS, COMPONENT_GAP
+from worldmap import (WorldMap, OUTDOOR_TYPES, OUTDOOR_EXCEPTIONS, COMPONENT_GAP,
+                      _add_display_adjustments, _display_point)
 
 
 SOURCE = Path(__file__).resolve().parents[1] / 'source/pokeemerald'
@@ -168,6 +170,8 @@ class WorldMapTests(unittest.TestCase):
         self.assertEqual(catalog['overlaps'], [])
         self.assertEqual(len(catalog['conflicts']), 1)
         self.assertEqual({catalog['conflicts'][0]['a'], catalog['conflicts'][0]['b']}, {'Route103', 'Route110'})
+        self.assertTrue(catalog['conflicts'][0]['display_resolved'])
+        self.assertEqual([row['name'] for row in rows.values() if row.get('projection')], ['Route103'])
         self.assertIn('LittlerootTown_BrendansHouse_1F', rows)
         self.assertIn('FarawayIsland_Interior', rows)
         self.assertTrue(rows['Route104_Prototype']['archived'])
@@ -204,6 +208,21 @@ class WorldMapTests(unittest.TestCase):
                             'right': (a['x'] + a['width'], a['y'] + offset)}[direction]
                 actual = b['x'], b['y']
                 self.assertEqual(actual != expected, frozenset((name, b['name'])) in reported)
+                # Independently sample every displayed border, in both travel
+                # directions. The raw cycle remains visible above, while all
+                # of its shared source coordinates now land at one point.
+                horizontal = direction in {'up', 'down'}
+                span_a, span_b = (a['width'], b['width']) if horizontal else (a['height'], b['height'])
+                start, end = max(0, offset), min(span_a, offset + span_b)
+                for step in range(start * 2, end * 2 + 1):
+                    value = step / 2
+                    if horizontal:
+                        ay, by = (a['height'], 0) if direction == 'down' else (0, b['height'])
+                        p, q = _display_point(a, value, ay), _display_point(b, value - offset, by)
+                    else:
+                        ax, bx = (a['width'], 0) if direction == 'right' else (0, b['width'])
+                        p, q = _display_point(a, ax, value), _display_point(b, bx, value - offset)
+                    self.assertEqual(p, q, (name, b['name'], direction, value))
         self.assertEqual(len(reported), 1)
         self.assertEqual(before, {path: path.read_bytes() for path in source_paths})
 
@@ -304,6 +323,103 @@ class WorldMapTests(unittest.TestCase):
                     w = min(a['x'] + a['width'], b['x'] + b['width']) - max(a['x'], b['x'])
                     h = min(a['y'] + a['height'], b['y'] + b['height']) - max(a['y'], b['y'])
                     self.assertTrue(w <= 0 or h <= 0, (left['id'], right['id']))
+
+
+class DisplayProjectionTests(unittest.TestCase):
+    def fixture(self):
+        rows = [{'name': name, 'x': x, 'y': y, 'width': width, 'height': height}
+                for name, x, y, width, height in (
+                    ('Route103', 120, 218, 80, 22), ('Route110', 200, 160, 40, 100),
+                    ('OldaleTown', 120, 240, 20, 20))]
+        edges = {'Route103': [('OldaleTown', 'down', 0), ('Route110', 'right', -60)],
+                 'OldaleTown': [('Route103', 'up', 0)], 'Route110': [('Route103', 'left', 60)]}
+        ids = {'MAP_' + name.upper(): name for name in edges}
+        maps = {name: {'id': 'MAP_' + name.upper(), 'connections': [
+            {'map': 'MAP_' + target.upper(), 'direction': direction, 'offset': offset}
+            for target, direction, offset in links]} for name, links in edges.items()}
+        conflicts = [{'a': 'Route103', 'b': 'Route110', 'direction': 'right', 'offset': -60,
+                      'expected': {'x': 200, 'y': 158}, 'actual': {'x': 200, 'y': 160},
+                      'delta': {'x': 0, 'y': 2}}]
+        return rows, maps, ids, conflicts
+
+    def test_projection_keeps_oldale_flat_and_aligns_east_without_source_mutations(self):
+        rows, maps, ids, conflicts = self.fixture()
+        before_rows, before_maps, before_conflicts = deepcopy(rows), deepcopy(maps), deepcopy(conflicts)
+        adjustments = _add_display_adjustments(rows, maps, ids, conflicts)
+        self.assertEqual(len(adjustments), 1)
+        self.assertEqual(rows[0]['projection'], {'kind': 'vertical-shear', 'knots': [[0, 0], [28, 0], [40, 2], [80, 2]]})
+        self.assertTrue(conflicts[0]['display_resolved'])
+        self.assertEqual(maps, before_maps)
+        self.assertEqual([{k: v for k, v in row.items() if k != 'projection'} for row in rows], before_rows)
+        self.assertEqual([{k: v for k, v in seam.items() if k != 'display_resolved'} for seam in conflicts], before_conflicts)
+        route, east, oldale = rows
+        for x in range(21):
+            self.assertEqual(_display_point(route, x, 22), _display_point(oldale, x, 0))
+        for y in range(23):
+            self.assertEqual(_display_point(route, 80, y), _display_point(east, 0, y + 60))
+        self.assertEqual(_display_point(route, 28, 6), (148, 224))
+        self.assertEqual(_display_point(route, 34, 6), (154, 225))
+        self.assertEqual(_display_point(route, 40, 6), (160, 226))
+        self.assertEqual(_display_point(route, 79, 6), (199, 226))
+
+    def test_reciprocal_conflict_record_gets_identical_projection(self):
+        rows, maps, ids, conflicts = self.fixture()
+        conflicts[0] = {'a': 'Route110', 'b': 'Route103', 'direction': 'left', 'offset': 60,
+                        'expected': {'x': 120, 'y': 220}, 'actual': {'x': 120, 'y': 218},
+                        'delta': {'x': 0, 'y': -2}}
+        self.assertEqual(len(_add_display_adjustments(rows, maps, ids, conflicts)), 1)
+        self.assertTrue(conflicts[0]['display_resolved'])
+
+    def test_changed_dimensions_or_positions_disable_projection_without_mutation(self):
+        for index, field in ((0, 'width'), (0, 'height'), (1, 'width'), (1, 'height'),
+                             (2, 'width'), (2, 'height'), (1, 'y'), (2, 'x')):
+            with self.subTest(index=index, field=field):
+                fixture = self.fixture()
+                fixture[0][index][field] += 1
+                before = deepcopy(fixture)
+                self.assertEqual(_add_display_adjustments(*fixture), [])
+                self.assertEqual(fixture, before)
+
+    def test_changed_connections_and_extra_incoming_edges_disable_projection(self):
+        mutations = ['offset', 'direction', 'missing', 'duplicate', 'incoming', 'invalid_offset']
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                rows, maps, ids, conflicts = self.fixture()
+                if mutation == 'offset':
+                    maps['Route103']['connections'][1]['offset'] = -59
+                elif mutation == 'direction':
+                    maps['Route103']['connections'][1]['direction'] = 'down'
+                elif mutation == 'missing':
+                    maps['OldaleTown']['connections'] = []
+                elif mutation == 'duplicate':
+                    maps['OldaleTown']['connections'] = []
+                    maps['Route103']['connections'].append(deepcopy(maps['Route103']['connections'][0]))
+                elif mutation == 'incoming':
+                    maps['CustomMap'] = {'connections': [{'map': 'MAP_ROUTE103', 'direction': 'down', 'offset': 0}]}
+                    rows.append({'name': 'CustomMap', 'x': 900, 'y': 900, 'width': 10, 'height': 10})
+                else:
+                    maps['Route103']['connections'][1]['offset'] = [-60]
+                before = deepcopy((rows, maps, ids, conflicts))
+                self.assertEqual(_add_display_adjustments(rows, maps, ids, conflicts), [])
+                self.assertEqual((rows, maps, ids, conflicts), before)
+
+    def test_projected_footprint_cannot_cover_a_custom_map(self):
+        rows, maps, ids, conflicts = self.fixture()
+        # This map lies below Route103's original rectangle, but inside the
+        # new eastern footprint. The guard must not cover even a detached map.
+        rows.append({'name': 'CustomRoom', 'x': 170, 'y': 241, 'width': 4, 'height': 4})
+        before = deepcopy((rows, maps, ids, conflicts))
+        self.assertEqual(_add_display_adjustments(rows, maps, ids, conflicts), [])
+        self.assertEqual((rows, maps, ids, conflicts), before)
+
+    def test_other_cycle_deltas_keep_the_original_warning(self):
+        for delta in ({'x': 0, 'y': 1}, {'x': 1, 'y': 2}, {'x': 0, 'y': -2}):
+            with self.subTest(delta=delta):
+                rows, maps, ids, conflicts = self.fixture()
+                conflicts[0]['delta'] = delta
+                self.assertEqual(_add_display_adjustments(rows, maps, ids, conflicts), [])
+                self.assertNotIn('projection', rows[0])
+                self.assertNotIn('display_resolved', conflicts[0])
 
 
 if __name__ == '__main__':
