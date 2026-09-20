@@ -263,7 +263,9 @@ class World:
         atlas, _ = self._pair(primary or layout['primary_tileset'], secondary or layout['secondary_tileset'])
         return png(atlas)
 
-    def render_map(self, name, primary=None, secondary=None):
+    def render_map(self, name, primary=None, secondary=None, max_size=None):
+        if max_size is not None:
+            integer(max_size, 32, 1024, 'Preview maximum size')
         _, layout = self._lookup(name)
         atlas, meta = self._pair(primary or layout['primary_tileset'], secondary or layout['secondary_tileset'])
         width, height = layout['width'], layout['height']
@@ -273,6 +275,10 @@ class World:
             if tile_id < meta['count']:
                 x, y = (tile_id % 16) * 16, (tile_id // 16) * 16
                 result.paste(atlas.crop((x, y, x + 16, y + 16)), ((i % width) * 16, (i // width) * 16))
+        if max_size is not None and max(result.size) > max_size:
+            scale = max_size / max(result.size)
+            size = tuple(max(1, round(side * scale)) for side in result.size)
+            result = result.resize(size, Image.Resampling.NEAREST)
         return png(result)
 
     def _build_object_catalog(self):

@@ -1,12 +1,14 @@
-"""One terrain canvas assembled from source map connections, without source writes.
+"""Every source map on one terrain canvas, without source writes.
 
-Each connected component uses real metatile coordinates. Disconnected areas are
-packed separately for browsing; those display offsets do not imply travel links.
+Each connected component uses real metatile coordinates. Detached interiors,
+floors and other maps are packed by area; those offsets do not imply travel links.
 Inconsistent source cycles and overlapping rectangles are exposed to the UI.
 """
-from collections import deque
+from collections import Counter, deque
+import math
 import re
 
+from areas import Areas
 from connections import Connections, OPPOSITE
 
 
@@ -20,6 +22,9 @@ OUTDOOR_EXCEPTIONS = frozenset({
     'AbandonedShip_Deck', 'LilycoveCity_DepartmentStoreRooftop', 'TrainerHill_Roof',
 })
 COMPONENT_GAP = 24
+MAP_GAP = 8
+SECTION_LABELS = {'town': 'Towns & cities', 'route': 'Routes',
+                  'dungeon': 'Caves & landmarks', 'special': 'Other areas'}
 
 
 def _is_archive(name):
@@ -59,16 +64,24 @@ class WorldMap:
 
     def catalog(self):
         snapshot = self.connections._snapshot()
-        all_maps = snapshot['maps']
-        maps = {name: data for name, data in all_maps.items()
-                if data.get('map_type') in OUTDOOR_TYPES or name in OUTDOOR_EXCEPTIONS}
+        maps = snapshot['maps']
+        areas = Areas(self.connections.source).catalog()['areas']
+        area_order = {area['id']: index for index, area in enumerate(areas)}
+        map_metadata, map_order = {}, {}
+        for area in areas:
+            for index, row in enumerate(area['maps']):
+                map_metadata[row['name']] = {'area_id': area['id'], 'area_name': area['name'], 'area_kind': area['kind'],
+                                             'role': row['role'], 'role_label': row['role_label'], 'display_name': row['display_name']}
+                map_order[row['name']] = (area_order[area['id']], index)
+        if set(map_metadata) != set(maps):
+            raise ValueError('Maps changed while their areas were being loaded. Reload the world canvas.')
         dimensions = {}
         warnings = []
         for name, data in maps.items():
             layout = snapshot['layouts'][data['layout']]
             width, height = layout['width'], layout['height']
             if type(width) is not int or type(height) is not int or not 1 <= width <= 255 or not 1 <= height <= 255:
-                raise ValueError(f'Invalid dimensions for outdoor map {name}.')
+                raise ValueError(f'Invalid dimensions for map {name}.')
             dimensions[name] = (width, height)
 
         adjacency = {name: [] for name in maps}
@@ -122,34 +135,108 @@ class WorldMap:
                 label = _human_name(seed) + (' area' if len(names) > 1 else '')
             components.append({'id': seed, 'names': names, 'label': label, 'archived': archived})
 
-        # Keep Hoenn first, then larger detached groups, then individual areas and
-        # archives. Each component receives one translation, preserving every
-        # within-component coordinate and all source seam inconsistencies.
-        components.sort(key=lambda component: ('LittlerootTown' not in component['names'],
-                                                component['archived'], -len(component['names']), component['id']))
-        canvas_width = max((_bounds(c['names'], positions, dimensions)['width'] for c in components), default=0)
-        cursor_x, cursor_y, row_height = 0, 0, 0
-        archived_row = False
-        for index, component in enumerate(components):
+        def translate(component, target_x, target_y):
             bounds = _bounds(component['names'], positions, dimensions)
-            if index == 0:
-                target_x, target_y = 0, 0
-                cursor_y = bounds['height'] + COMPONENT_GAP
-            else:
-                if component['archived'] and not archived_row:
-                    if cursor_x:
-                        cursor_y += row_height + COMPONENT_GAP
-                    cursor_x, row_height, archived_row = 0, 0, True
-                if cursor_x and cursor_x + bounds['width'] > canvas_width:
-                    cursor_x, cursor_y, row_height = 0, cursor_y + row_height + COMPONENT_GAP, 0
-                target_x, target_y = cursor_x, cursor_y
-                cursor_x += bounds['width'] + COMPONENT_GAP
-                row_height = max(row_height, bounds['height'])
             shift_x, shift_y = target_x - bounds['x'], target_y - bounds['y']
             for name in component['names']:
                 x, y = positions[name]
                 positions[name] = (x + shift_x, y + shift_y)
             component['bounds'] = _bounds(component['names'], positions, dimensions)
+
+        # Hoenn stays exactly where the outdoor-only canvas placed it. Everything
+        # else receives one rigid component translation into four category shelves.
+        # Even a custom connection between different areas keeps its geometry.
+        main = next((component for component in components if 'LittlerootTown' in component['names']), None)
+        if main is None and components:
+            main = max(components, key=lambda component: len(component['names']))
+        if main:
+            translate(main, 0, 0)
+        detached = [component for component in components if component is not main]
+        cluster_components = {}
+        for component in detached:
+            owners = Counter(map_metadata[name]['area_id'] for name in component['names'])
+            owner = min(owners, key=lambda area_id: (-owners[area_id], area_order[area_id]))
+            cluster_components.setdefault(owner, []).append(component)
+
+        groups = []
+        for area in areas:
+            members = cluster_components.get(area['id'], [])
+            if not members:
+                continue
+            members.sort(key=lambda component: min(map_order[name] for name in component['names']))
+            sizes = [_bounds(component['names'], positions, dimensions) for component in members]
+            # Compact place-sized mosaics keep floors together without making a
+            # large facility into a single very tall strip of rooms.
+            padded_area = sum((box['width'] + MAP_GAP) * (box['height'] + MAP_GAP) for box in sizes)
+            target_width = max(max(box['width'] for box in sizes), min(320, math.ceil(math.sqrt(padded_area) * 1.6)))
+            cursor_x, cursor_y, row_height = 0, 0, 0
+            for component, box in zip(members, sizes):
+                if cursor_x and cursor_x + box['width'] > target_width:
+                    cursor_x, cursor_y, row_height = 0, cursor_y + row_height + MAP_GAP, 0
+                translate(component, cursor_x, cursor_y)
+                cursor_x += box['width'] + MAP_GAP
+                row_height = max(row_height, box['height'])
+            names = sorted((name for component in members for name in component['names']), key=map_order.__getitem__)
+            group = {'id': 'area:' + area['id'], 'area_id': area['id'], 'name': area['name'], 'kind': area['kind'],
+                     'names': names, 'all_names': [row['name'] for row in area['maps']],
+                     'main_names': [row['name'] for row in area['maps'] if main and row['name'] in main['names']],
+                     'area_ids': sorted({map_metadata[name]['area_id'] for name in names}, key=area_order.__getitem__),
+                     'bounds': _bounds(names, positions, dimensions), '_components': members}
+            groups.append(group)
+
+        canvas_width = max([800, main['bounds']['width'] if main else 0] + [group['bounds']['width'] for group in groups])
+        sections = []
+        if main:
+            sections.append({'id': 'main', 'kind': 'main', 'label': main['label'] + ' · Connected world',
+                             'bounds': main['bounds'], 'names': main['names'], 'group_ids': []})
+        shelf_y = (main['bounds']['height'] if main else 0) + COMPONENT_GAP
+        for kind, label in SECTION_LABELS.items():
+            category_groups = [group for group in groups if group['kind'] == kind]
+            if not category_groups:
+                continue
+            cursor_x, cursor_y, row_height = 0, shelf_y + MAP_GAP, 0
+            for group in category_groups:
+                box = group['bounds']
+                if cursor_x and cursor_x + box['width'] > canvas_width:
+                    cursor_x, cursor_y, row_height = 0, cursor_y + row_height + COMPONENT_GAP, 0
+                shift_x, shift_y = cursor_x - box['x'], cursor_y - box['y']
+                for component in group['_components']:
+                    old = component['bounds']
+                    translate(component, old['x'] + shift_x, old['y'] + shift_y)
+                group['bounds'] = _bounds(group['names'], positions, dimensions)
+                cursor_x += box['width'] + COMPONENT_GAP
+                row_height = max(row_height, box['height'])
+            names = [name for group in category_groups for name in group['names']]
+            section_bounds = _bounds(names, positions, dimensions)
+            sections.append({'id': kind, 'kind': kind, 'label': label, 'bounds': section_bounds, 'names': names,
+                             'group_ids': [group['id'] for group in category_groups]})
+            shelf_y = section_bounds['y'] + section_bounds['height'] + COMPONENT_GAP
+
+        # A two-column overview gives the whole collection a useful shape in a
+        # landscape editor: Hoenn stays upper left, towns upper right, and the
+        # remaining category shelves continue down those columns.
+        column_bottoms = [(main['bounds']['height'] + COMPONENT_GAP) if main else 0, 0]
+        category_column = {'town': 1, 'route': 0, 'dungeon': 1, 'special': 0}
+        for section in sections:
+            if section['id'] == 'main':
+                continue
+            column = category_column[section['kind']]
+            target_x, target_y = column * (canvas_width + COMPONENT_GAP), column_bottoms[column]
+            old_bounds = section['bounds']
+            shift_x, shift_y = target_x - old_bounds['x'], target_y - old_bounds['y']
+            category_groups = [group for group in groups if group['id'] in section['group_ids']]
+            for group in category_groups:
+                for component in group['_components']:
+                    old = component['bounds']
+                    translate(component, old['x'] + shift_x, old['y'] + shift_y)
+                group['bounds'] = _bounds(group['names'], positions, dimensions)
+            section['bounds'] = _bounds(section['names'], positions, dimensions)
+            column_bottoms[column] = target_y + section['bounds']['height'] + COMPONENT_GAP
+
+        components = ([main] if main else []) + [component for group in groups for component in group['_components']]
+        group_by_map = {name: group['id'] for group in groups for name in group['names']}
+        for group in groups:
+            del group['_components']
 
         conflicts, seen_conflicts = [], set()
         for a, b, direction, offset, dx, dy in edges:
@@ -192,6 +279,8 @@ class WorldMap:
                 result.append({'name': name, 'id': data['id'], 'x': x, 'y': y, 'width': width, 'height': height,
                                'map_type': data.get('map_type'), 'region_map_section': data.get('region_map_section'),
                                'component': component['id'], 'archived': component['archived'],
+                               **map_metadata[name], 'group': group_by_map.get(name),
+                               'is_outdoor': data.get('map_type') in OUTDOOR_TYPES or name in OUTDOOR_EXCEPTIONS,
                                'overlaps': sorted(map_overlaps[name]),
                                'preview_url': f'/api/world/maps/{name}/preview.png'})
         if conflicts:
@@ -199,8 +288,9 @@ class WorldMap:
         if overlaps:
             warnings.append(f'{len(overlaps)} map rectangles overlap. Select the map you want to edit to bring its terrain forward.')
         if len(components) > 1:
-            warnings.append('Detached areas are displayed below the main world. Their display spacing does not create travel connections.')
+            warnings.append('Rooms, floors, underwater maps and other detached areas are grouped by place around the main world. Display spacing does not create travel connections.')
         bounds = _bounds(list(maps), positions, dimensions)
-        return {'revision': snapshot['revision'], 'maps': result, 'components': components, 'bounds': bounds,
+        return {'revision': snapshot['revision'], 'maps': result, 'components': components, 'groups': groups,
+                'sections': sections, 'bounds': bounds,
                 'initial_bounds': components[0]['bounds'] if components else bounds,
                 'conflicts': conflicts, 'overlaps': overlaps, 'warnings': warnings}

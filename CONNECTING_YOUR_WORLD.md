@@ -1,12 +1,16 @@
 # Building towns, routes, and the places inside them
 
-Start in the [World canvas](http://127.0.0.1:8765/worldmap). The outdoor maps are drawn together at their walking connections. Zoom out to see the region, zoom into a place, select it, and paint its terrain directly without changing pages. Save world writes the edited maps together. Disconnected places are shown separately on the same canvas; their placement does not invent new travel links. Emerald has a few route joins whose dimensions do not form a perfectly flat region; the editor reports those seams and uses the selected map when areas overlap.
+Start in the [World canvas](http://127.0.0.1:8765/worldmap). Every map is available there, organized into **Towns & cities**, **Routes**, **Caves & landmarks**, and **Other areas**. This includes homes, shops, gyms, cave floors, underwater maps, secret bases and special facilities. Connected landscapes keep their walking connections; separate rooms and floors sit in labeled area groups on the same canvas. Their display arrangement does not invent new travel links.
+
+Zoom out to see everything, or select an area or map to focus it. Paint terrain and edit people directly without changing pages. Save world writes the edited maps together. Emerald has a few route joins whose dimensions do not form a perfectly flat region; the editor reports those seams and uses the selected map when areas overlap.
+
+Choose **Edit story, settings & more** to open the selected place's dialogue, map settings, doors and stairs, or buildings in a panel over the world. The same panel includes starters, gym leaders, player appearance, encounters, items, music references and source logic. **Back to world** keeps unfinished forms available and refreshes saved changes. Each editor has its own Save button.
 
 Scroll to zoom, hold Space and drag to move around, or click a place in the sidebar to focus it. Choose a landscape tile to paint. **People & events** lets you place, move and remove people, objects and markers on the same world canvas. **New blank place** adds a blank town or route alongside the original world; connect it through **Connections** when you decide where it belongs.
 
 [Towns & routes](http://127.0.0.1:8765/areas) is the organized area browser. Each area has its complete outdoor landscape and a grouped list of its interiors. Homes, shops, Pokémon Centers, gyms, story buildings, caves, and floors stay under the area they belong to. Search also finds a building inside an area.
 
-- **Edit entire town / route** opens its complete outdoor tile map. Paint the land, buildings, roads, trees and water; place people and objects; resize the map if needed.
+- **Edit entire town / route** focuses its main map on the world canvas. Paint the land, buildings, roads, trees and water; place people and objects. Its interior cards open those rooms on the same canvas. Map resizing and advanced map settings are also available in World studio.
 - **Add interior** creates a separate blank room using a house, shop, gym, Pokémon Center, laboratory or cave tileset. Keep the area's name prefix so the room stays grouped with its area.
 - **New town / New route** creates a blank outdoor map and its own area workspace. These preserve the existing world. New maps initially borrow the template's music and region-map section; update those map settings when assigning the new place its own identity.
 - Each interior has its own **Edit map**, **Doors & links**, and **Story** links.

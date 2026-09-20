@@ -318,7 +318,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Referrer-Policy', 'no-referrer')
-        self.send_header('Content-Security-Policy', "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; media-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+        self.send_header('Content-Security-Policy', "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; media-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'self'")
         if download:
             self.send_header('Content-Disposition', 'attachment; filename="' + download + '"')
         self.end_headers()
@@ -372,6 +372,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200, self.project.world.get_map(value('name'), value('primary') or None, value('secondary') or None))
             if request.path == '/api/world/objects':
                 return self.respond(200, self.project.world.object_catalog())
+            if request.path == '/api/player':
+                from player import Player
+                with self.project.lock:
+                    return self.respond(200, Player(self.project.source).catalog())
+            if request.path == '/api/player/asset':
+                from player import Player
+                with self.project.lock:
+                    return self.respond(200, Player(self.project.source).get_asset(value('path'), palette_path=value('palette_path') or None))
+            if request.path == '/api/player/preview':
+                from player import Player
+                with self.project.lock:
+                    return self.respond(200, Player(self.project.source).preview(value('path'), palette_path=value('palette_path') or None), 'image/png')
             if request.path == '/api/connections':
                 with self.project.lock:
                     return self.respond(200, self.project.connections.catalog())
@@ -386,7 +398,15 @@ class Handler(BaseHTTPRequestHandler):
             if request.path.startswith('/api/world/maps/') and request.path.endswith('/atlas.png'):
                 return self.respond(200, self.project.world.atlas(request.path.split('/')[-2], value('primary') or None, value('secondary') or None), 'image/png')
             if request.path.startswith('/api/world/maps/') and request.path.endswith('/preview.png'):
-                return self.respond(200, self.project.world.render_map(request.path.split('/')[-2]), 'image/png')
+                sizes = parse_qs(request.query, keep_blank_values=True).get('max_size')
+                max_size = None
+                if sizes is not None:
+                    if len(sizes) != 1 or not sizes[0].isascii() or not sizes[0].isdigit():
+                        raise ValueError('Preview maximum size must be an integer from 32 to 1024.')
+                    max_size = int(sizes[0])
+                    if not 32 <= max_size <= 1024:
+                        raise ValueError('Preview maximum size must be an integer from 32 to 1024.')
+                return self.respond(200, self.project.world.render_map(request.path.split('/')[-2], max_size=max_size), 'image/png')
             if request.path.startswith('/api/world/objects/') and request.path.endswith('.png'):
                 return self.respond(200, self.project.world.object_sprite(request.path.split('/')[-1][:-4]), 'image/png')
             if request.path == '/api/campaign':
@@ -425,7 +445,9 @@ class Handler(BaseHTTPRequestHandler):
                       '/region': 'region.html', '/region.js': 'region.js', '/region.css': 'region.css',
                       '/connections': 'connections.html', '/connections.js': 'connections.js', '/connections.css': 'connections.css',
                       '/areas': 'areas.html', '/areas.js': 'areas.js', '/areas.css': 'areas.css',
-                      '/worldmap': 'worldmap.html', '/worldmap.js': 'worldmap.js', '/worldmap.css': 'worldmap.css'}
+                      '/worldmap': 'worldmap.html', '/worldmap.js': 'worldmap.js', '/worldmap.css': 'worldmap.css',
+                      '/player': 'player.html', '/player.js': 'player.js', '/player.css': 'player.css',
+                      '/worldtools.js': 'worldtools.js', '/worldtools.css': 'worldtools.css'}
             if request.path in static:
                 path = ROOT / 'web' / static[request.path]
                 mime = mimetypes.guess_type(str(path))[0] or 'text/plain'
@@ -468,6 +490,12 @@ class Handler(BaseHTTPRequestHandler):
                     plan = self.project.world.plan_new(name, body.get('template', 'LittlerootTown'), body.get('width', 20), body.get('height', 20))
                     saved = self.project.commit(plan, 'New blank map: ' + str(name))
                     result = {**self.project.world.get_map(name), 'transaction': saved['id'], 'message': saved['message']}
+            elif self.path == '/api/player/save':
+                from player import Player
+                with self.project.lock:
+                    saved = self.project.commit(Player(self.project.source).plan_save(body), 'Player appearance: ' + str(body.get('path')))
+                    result = {'asset': Player(self.project.source).get_asset(body.get('path'), palette_path=body.get('palette_path') or None),
+                              'transaction': saved['id'], 'message': saved['message']}
             elif self.path == '/api/campaign/starters':
                 with self.project.lock:
                     saved = self.project.commit(self.project.campaign.plan_starters(body), 'Starter choices')

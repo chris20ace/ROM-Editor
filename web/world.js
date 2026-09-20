@@ -501,10 +501,11 @@
     try{
       const [session,maps,objects,areas]=await Promise.all([api('/api/session'),api('/api/world/maps'),api('/api/world/objects'),api('/api/areas')]);
       S.token=session.token;S.maps=maps.maps;S.tilesets=maps.tilesets||[];S.objects=objects.objects;S.objectMap=new Map(S.objects.map(o=>[o.id,o]));
-      const requested=new URLSearchParams(location.search).get('map');const initial=S.maps.some(m=>m.name===requested)?requested:'LittlerootTown';
+      const requested=new URLSearchParams(location.search).get('map');const requestedTab=new URLSearchParams(location.search).get('tab');const initial=S.maps.some(m=>m.name===requested)?requested:'LittlerootTown';
       applyAreas(areas,initial);populateMapIds();
       $('#object-ids').replaceChildren(...S.objects.map(o=>{const option=node('option');option.value=o.id;option.label=o.name||nice(o.id);return option;}));
       renderObjects();await openMap(initial,true);
+      if(['tiles','objects','events','map'].includes(requestedTab))tab(requestedTab);
     }
     catch(err){$('#loading').hidden=true;$('#map-title').textContent='Your world needs another try';error(err.message);$('#save-status').textContent='Connection error';}
   }

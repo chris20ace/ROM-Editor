@@ -24,15 +24,16 @@ The workbench edits files at the top of this diagram. Building and playing the o
 
 ## Choose an editor
 
-- **[World canvas](/worldmap):** see the outdoor world on one continuous canvas. Zoom, select a town or route, paint terrain or movement, and place objects directly. Save edits to multiple maps together. Interior rooms remain linked separate maps.
+- **[World canvas](/worldmap):** every map on one canvas, organized into towns and cities, routes, caves and landmarks, and other areas. Interiors, cave floors, underwater maps and special facilities are included. Zoom into any map, paint terrain or movement, and place objects directly. Save edits to multiple maps together. Separate rooms keep their gameplay links while appearing in labeled groups for editing.
 - **[Towns & routes](/areas):** open a complete town or route workspace, with its houses, shops, Pokémon Centers, gyms, story buildings and other interiors grouped together. Create blank towns, routes, and interiors here.
 - **[Connect places](/connections):** arrange map previews, join walking edges in both directions, or choose both ends of a door or staircase. The PokéNav picture is separate from these travel links. See [Connecting your world](CONNECTING_YOUR_WORLD.md) for examples.
 - **[World studio](/world):** draw and edit all 518 original maps. Paint terrain, collision and elevation; add, move or delete NPCs, objects, warps, signs, story triggers and hidden items; resize maps, change settings and connect locations. Start a new blank map with an existing tileset, or clear an existing map.
 - **[Region map](/region):** repaint the actual PokéNav/town-map artwork and its named location grid. Edit location names and bounds independently of the terrain the player walks through.
 - **[Campaign studio](/campaign):** edit map dialogue and full event scripts, choose the three starters, and configure 854 trainer battles, including 40 gym leader battles and rematches.
+- **[Player appearance](/player):** redraw Brendan and May's overworld animations, battle front/back sprites, intro and credits art, and PokéNav icons. Edit individual pixels and palettes or import/export a complete PNG sheet, preserving frame sizes and order.
 - **[Source explorer](/#files):** inspect the game's files and edit advanced story logic, shared scripts, encounters, shops, menus and engine behavior. Pokémon species files, evolutions, learnsets, names and Pokémon graphics are protected from Workbench writes.
 
-Saving updates the local source and backs up previous files. Use **My changes → Export rebuild files (.zip)** when exporting a rebuild: terrain and region artwork include binary files that a text patch does not carry. The export is source changes for this pinned project, not a playable game.
+The world canvas's **Edit story, settings & more** panel opens these editors over the canvas. It keeps unsaved forms available while switching tools or returning to the world. Saving updates the local source and backs up previous files. Use **My changes → Export rebuild files (.zip)** when exporting a rebuild: terrain, region and player artwork include binary files that a text patch does not carry. The export is source changes for this pinned project, not a playable game.
 
 ## World and story
 
@@ -79,7 +80,7 @@ A move's effect selector points into implemented behavior; typing a new effect n
 | Element | Main source locations | What you can do here |
 |---|---|---|
 | Pokémon art | `graphics/pokemon/`, `src/data/pokemon_graphics/`, `src/data/graphics/pokemon.h`, `src/anim_mon_front_pics.c` | Preview existing art; Pokémon graphics and their tables are protected |
-| Trainer and overworld sprites | `graphics/trainers/`, `graphics/object_events/`, `src/data/trainer_graphics/`, `src/data/object_events/` | Preview art and edit text tables |
+| Trainer and overworld sprites | `graphics/trainers/`, `graphics/object_events/`, `src/data/trainer_graphics/`, `src/data/object_events/` | Player appearance editor for Brendan and May's artwork and palettes; preview other art and edit text tables |
 | Battle animation | `graphics/battle_anims/`, `data/battle_anim_scripts.s`, `src/battle_anim*.c` | Inspect assets; edit scripts/code |
 | Menus, icons, fonts, title screen | `graphics/interface/`, `graphics/fonts/`, `graphics/items/`, `graphics/title_screen/`, `graphics/text_window/` | Preview graphics; change images with external tools |
 | Menu behavior | `src/party_menu.c`, `src/item_menu.c`, `src/start_menu.c`, `src/pokemon_summary_screen.c`, `src/title_screen.c` | Edit C implementation |

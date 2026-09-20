@@ -10,12 +10,12 @@ import re
 from workspace_edits import protected_species
 
 
-MAX_BATCH_MAPS = 128
+MAX_BATCH_MAPS = 1024
 _NAME = re.compile(r"[A-Za-z_][A-Za-z_0-9]*\Z")
 
 
 def plan_world_batch(world, bodies):
-    """Return one plan for 1–128 distinct existing maps, or raise without writes.
+    """Return one plan for up to 1024 distinct existing maps, or raise without writes.
 
 Each body is the ordinary ``World.plan_save`` body plus a ``name``. All maps use
 their own saved revisions. New cross-map warp references must already be valid

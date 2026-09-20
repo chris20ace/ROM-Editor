@@ -1,4 +1,4 @@
-"""Geometry tests for the continuous outdoor terrain canvas."""
+"""Geometry, area organization and coverage tests for the all-map terrain canvas."""
 import json
 from pathlib import Path
 import tempfile
@@ -70,7 +70,7 @@ class WorldMapTests(unittest.TestCase):
         self.assertEqual(rows['Route']['y'] + 9, rows['LittlerootTown']['y'])
         self.assertEqual(rows['Route']['x'] + 4, rows['LittlerootTown']['x'])
 
-    def test_excludes_interiors_and_underwater_but_includes_named_exteriors_and_new_outdoors(self):
+    def test_includes_interiors_underwater_named_exteriors_and_new_outdoors(self):
         self.add_map('House', map_type='MAP_TYPE_INDOOR')
         self.add_map('IslandCave', map_type='MAP_TYPE_UNDERGROUND')
         self.add_map('Underwater_Route', map_type='MAP_TYPE_UNDERWATER')
@@ -78,9 +78,14 @@ class WorldMapTests(unittest.TestCase):
         self.add_map('MyNewTown', map_type='MAP_TYPE_TOWN')
         self.links('LittlerootTown', [('Underwater_Route', 'dive', 0)])
         catalog = self.model.catalog()
-        self.assertEqual(set(self.rows(catalog)), {'LittlerootTown', 'BirthIsland_Exterior', 'MyNewTown'})
-        self.assertEqual(len(catalog['components']), 3)
+        self.assertEqual(set(self.rows(catalog)), {'LittlerootTown', 'House', 'IslandCave', 'Underwater_Route', 'BirthIsland_Exterior', 'MyNewTown'})
+        self.assertEqual(len(catalog['components']), 6)
         self.assertEqual(catalog['components'][0]['label'], 'Hoenn')
+        rows = self.rows(catalog)
+        self.assertFalse(rows['House']['is_outdoor'])
+        self.assertFalse(rows['Underwater_Route']['is_outdoor'])
+        self.assertTrue(rows['BirthIsland_Exterior']['is_outdoor'])
+        self.assertTrue(rows['MyNewTown']['is_outdoor'])
 
     def test_disconnected_components_are_packed_separately_and_archive_is_last(self):
         self.add_map('Detached', 8, 8)
@@ -152,9 +157,9 @@ class WorldMapTests(unittest.TestCase):
     def test_real_hoenn_geometry_exposes_source_seams_and_preserves_continent(self):
         catalog = WorldMap(SOURCE).catalog()
         rows = self.rows(catalog)
-        expected = {p.parent.name for p in (SOURCE / 'data/maps').glob('*/map.json')
-                    if json.loads(p.read_bytes())['map_type'] in OUTDOOR_TYPES or p.parent.name in OUTDOOR_EXCEPTIONS}
+        expected = {p.parent.name for p in (SOURCE / 'data/maps').glob('*/map.json')}
         self.assertEqual(set(rows), expected)
+        self.assertEqual(len(catalog['maps']), len(expected))
         self.assertEqual(catalog['components'][0]['id'], 'LittlerootTown')
         self.assertIn('LittlerootTown', catalog['components'][0]['names'])
         self.assertIn('EverGrandeCity', catalog['components'][0]['names'])
@@ -162,9 +167,87 @@ class WorldMapTests(unittest.TestCase):
         self.assertEqual(rows['Route101']['x'], rows['LittlerootTown']['x'])
         self.assertTrue(any({overlap['a'], overlap['b']} == {'Route116', 'VerdanturfTown'} for overlap in catalog['overlaps']))
         self.assertEqual(len(catalog['conflicts']), 3)
-        self.assertNotIn('LittlerootTown_BrendansHouse_1F', rows)
+        self.assertIn('LittlerootTown_BrendansHouse_1F', rows)
         self.assertIn('FarawayIsland_Interior', rows)
         self.assertTrue(rows['Route104_Prototype']['archived'])
+
+    def test_area_clusters_keep_homes_and_floors_with_owners_in_natural_order(self):
+        self.add_map('LittlerootTown_House_10F', 8, 8, 'MAP_TYPE_INDOOR')
+        self.add_map('LittlerootTown_House_2F', 8, 8, 'MAP_TYPE_INDOOR')
+        self.add_map('LittlerootTown_House_1F', 8, 8, 'MAP_TYPE_INDOOR')
+        self.add_map('MyNewTown', 20, 20, 'MAP_TYPE_TOWN')
+        self.add_map('MyNewTown_House1', 8, 8, 'MAP_TYPE_INDOOR')
+        catalog = self.model.catalog()
+        rows = self.rows(catalog)
+        group = next(group for group in catalog['groups'] if group['area_id'] == 'LittlerootTown')
+        self.assertEqual(group['names'], ['LittlerootTown_House_1F', 'LittlerootTown_House_2F', 'LittlerootTown_House_10F'])
+        self.assertEqual(group['main_names'], ['LittlerootTown'])
+        self.assertEqual(group['kind'], 'town')
+        self.assertEqual(rows['LittlerootTown_House_1F']['role'], 'homes')
+        self.assertEqual(rows['LittlerootTown_House_1F']['area_name'], 'Littleroot Town')
+        self.assertEqual(rows['MyNewTown_House1']['area_id'], 'MyNewTown')
+        self.assertEqual(rows['MyNewTown_House1']['area_kind'], 'town')
+        self.assertNotEqual(rows['MyNewTown_House1']['group'], group['id'])
+        # Each category is a display shelf, not another path in the game.
+        self.assertEqual([section['id'] for section in catalog['sections']], ['main', 'town'])
+        town_section = catalog['sections'][1]['bounds']
+        self.assertGreaterEqual(town_section['x'], catalog['initial_bounds']['width'] + COMPONENT_GAP)
+
+    def test_cross_area_cardinal_component_stays_whole_inside_one_cluster(self):
+        self.add_map('OldaleTown_House1', 8, 8, 'MAP_TYPE_INDOOR')
+        self.add_map('LittlerootTown_House1', 8, 8, 'MAP_TYPE_INDOOR')
+        self.links('LittlerootTown_House1', [('OldaleTown_House1', 'right', 2)])
+        catalog = self.model.catalog()
+        rows = self.rows(catalog)
+        a, b = rows['LittlerootTown_House1'], rows['OldaleTown_House1']
+        self.assertEqual((b['x'] - a['x'], b['y'] - a['y']), (8, 2))
+        self.assertEqual(a['component'], b['component'])
+        self.assertEqual(a['group'], b['group'])
+        self.assertNotEqual(a['area_id'], b['area_id'])
+        group = next(group for group in catalog['groups'] if group['id'] == a['group'])
+        self.assertEqual(set(group['area_ids']), {'LittlerootTown', 'OldaleTown'})
+
+    def test_real_all_map_categories_cover_secret_bases_floors_underwater_and_shared_rooms(self):
+        catalog = WorldMap(SOURCE).catalog()
+        rows = self.rows(catalog)
+        expected = {path.parent.name for path in (SOURCE / 'data/maps').glob('*/map.json')}
+        self.assertEqual(len(rows), len(expected))
+        self.assertGreaterEqual(len(rows), 518)
+        self.assertEqual(set(rows), expected)
+        self.assertEqual({row['area_kind'] for row in rows.values()}, {'town', 'route', 'dungeon', 'special'})
+        for name in ('Underwater_Route124', 'SecretBase_RedCave1', 'VictoryRoad_B1F', 'ContestHallBeauty', 'BattlePyramidSquare01'):
+            self.assertIn(name, rows)
+            self.assertFalse(rows[name]['is_outdoor'])
+            self.assertTrue(rows[name]['area_id'])
+            self.assertTrue(rows[name]['role_label'])
+            self.assertTrue(rows[name]['display_name'])
+        self.assertEqual(rows['Underwater_Route124']['area_id'], 'Route124')
+        self.assertEqual(rows['Underwater_Route124']['area_kind'], 'route')
+        self.assertEqual(rows['SecretBase_RedCave1']['area_id'], 'SecretBases')
+        self.assertEqual(rows['VictoryRoad_B1F']['area_kind'], 'dungeon')
+        self.assertEqual(rows['ContestHallBeauty']['area_id'], 'ContestHalls')
+        self.assertEqual(rows['BattlePyramidSquare01']['area_id'], 'BattleFrontier')
+        section_names = [name for section in catalog['sections'] for name in section['names']]
+        self.assertEqual(len(section_names), len(set(section_names)))
+        self.assertEqual(set(section_names), expected)
+
+    def test_real_shelves_and_detached_components_do_not_overlap_and_fit_landscape(self):
+        catalog = WorldMap(SOURCE).catalog()
+        self.assertGreater(catalog['bounds']['width'], catalog['bounds']['height'])
+        self.assertEqual(catalog['initial_bounds'], {'x': 0, 'y': 0, 'width': 800, 'height': 383})
+        sections = {section['id']: section for section in catalog['sections']}
+        self.assertEqual(set(sections), {'main', 'town', 'route', 'dungeon', 'special'})
+        self.assertEqual(len(sections['main']['names']), 49)
+        self.assertGreater(sections['town']['bounds']['x'], sections['main']['bounds']['x'])
+        self.assertEqual(sections['town']['bounds']['y'], 0)
+        for collection in (catalog['components'], catalog['sections'], catalog['groups']):
+            for index, left in enumerate(collection):
+                a = left['bounds']
+                for right in collection[index + 1:]:
+                    b = right['bounds']
+                    w = min(a['x'] + a['width'], b['x'] + b['width']) - max(a['x'], b['x'])
+                    h = min(a['y'] + a['height'], b['y'] + b['height']) - max(a['y'], b['y'])
+                    self.assertTrue(w <= 0 or h <= 0, (left['id'], right['id']))
 
 
 if __name__ == '__main__':

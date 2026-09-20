@@ -24,13 +24,16 @@ The workbench runs at **http://127.0.0.1:8765**. Choose the workspace for what y
 
 | Workspace | What it edits |
 |---|---|
-| [World canvas](http://127.0.0.1:8765/worldmap) | The outdoor world together on one zoomable canvas. Select a place and edit its terrain, movement or objects in place; save edits across maps together. |
+| [World canvas](http://127.0.0.1:8765/worldmap) | Every map on one zoomable canvas: towns and cities, routes, caves and landmarks, and other areas, including interiors and underwater maps. Select any map and edit terrain, movement or objects in place; save edits across maps together. |
 | [Towns & routes](http://127.0.0.1:8765/areas) | Complete town and route workspaces, with interiors sorted into homes, shops, Centers, gyms, story buildings and other areas. Create blank towns, routes and interiors. |
 | [Connect places](http://127.0.0.1:8765/connections) | Arrange map previews, join town/route edges, and connect both ends of doors or stairs using real map previews. |
 | [World studio](http://127.0.0.1:8765/world) | All 518 original maps; terrain, collision, elevation, objects, NPCs, warps, signs, triggers, hidden items, map settings and connections. Create additional blank maps or clear an existing layout. |
 | [Region map](http://127.0.0.1:8765/region) | The actual in-game PokéNav/town-map artwork, named location grid, display names and location bounds. |
 | [Campaign studio](http://127.0.0.1:8765/campaign) | Local map dialogue and event scripts, the three starter choices, and 854 trainer battles including 40 gym leader battles and rematches. |
+| [Player appearance](http://127.0.0.1:8765/player) | Pixel editing for Brendan and May: overworld animations, battle front portraits and back-view throw frames, intro/credits artwork, and PokéNav icons. Paint indexed pixels, change palettes, and import/export complete PNG sheets. |
 | [Source explorer](http://127.0.0.1:8765/#files) | Advanced scripts and engine logic, shops, encounters, shared text, menus, music references and other source files. |
+
+On the world canvas, **Edit story, settings & more** opens these tools in a panel for the selected place. Switch tools or choose **Back to world** without losing unsaved forms. Save inside each editor; returning to the world refreshes saved source changes.
 
 Saving updates the corresponding files in `source/pokeemerald/` and backs up previous contents under `.workbench/`. Pokémon species data, names, evolutions, learnsets and Pokémon graphics are protected from Workbench writes. Choosing a species for a starter, trainer team or encounter uses the existing Pokémon.
 
@@ -40,18 +43,19 @@ Read **[CONNECTING_YOUR_WORLD.md](CONNECTING_YOUR_WORLD.md)** for the town/route
 
 ## What is ready
 
-- A continuous world canvas assembled from the outdoor maps. Zoom and pan, paint across compatible town/route boundaries, place and move people in the world, and save several edited places together.
+- A world canvas containing all maps. Connected landscapes keep their walking geometry; interiors, cave floors and special locations are arranged in labeled area groups. Browse the four area categories, zoom into any map, paint terrain, place people, and save several edited maps together.
 - A 2D map canvas with the original tiles, a sprite catalog, paint/fill/rectangle/pick tools, zoom, undo/redo, map resizing and blank-map creation.
 - Add, move, edit and delete map events. Buildings and trees are assembled from terrain tiles; entrances use warp events.
 - A separate editor for region-map artwork and named locations. The region picture and the maps the player walks through are edited independently.
 - Dialogue forms and full map-script editing; starter forms; trainer names, portraits, classes, music, AI, items and teams of up to six Pokémon.
+- A player sprite editor with individual frames and whole sheets, paint/fill/erase/pick, undo/redo, shared-palette confirmation, exact PNG import/export, and saved artwork restoration. Reflection and other palette variants are separate selections; changing a palette shows which player sheets share it.
 - Source inspection, image previews, sample-audio playback, backups, saved change tracking and export of changed source files, including binary map layouts.
 
 To give a new NPC dialogue, select it in World studio, choose **Write conversation**, enter your text, and create the conversation. Its script is saved and linked in your pending map edits; choose **Save map** to finish attaching it. Alternatively, **Campaign → New conversation → Save conversation to source** creates dialogue for the selected map, including blank maps, and gives you a script label to paste into an NPC's **Script to run** field. Pressing Enter in either dialogue form creates a game text line.
 
 Story conditions, cutscenes, badges, rewards, shops, special travel and other custom behavior are still written in the source scripts or engine code. Changing the starters does not automatically rewrite rival teams, gifts or story references. Editing a leader's battle does not rewrite that gym's puzzle or badge script. Region-map painting does not automatically move Fly destinations or map connections.
 
-The editor uses the game's existing tilesets and sprites. Drawing new tile or sprite artwork, editing MIDI arrangements, and creating new engine behavior require the appropriate graphics, audio or source tools. This is a world-and-campaign editor, with the source explorer available for deeper changes.
+The map editor uses the game's existing tilesets and object catalog. Player appearance can be redrawn directly in the player editor, keeping the original frame sizes and order. New terrain artwork and other sprites need a palette-aware graphics tool; MIDI arrangements need an audio tool. The source explorer is available for deeper logic changes.
 
 ## Saving source is not building a game
 
@@ -67,7 +71,7 @@ For an independent game in another engine, this workspace can help you study the
 |---|---|
 | `Start Workbench.cmd` | Start the local workbench |
 | `server.py` | Local server and source-editing backend |
-| `world.py`, `campaign.py`, `region.py` | Source-backed world, campaign and region editors |
+| `world.py`, `campaign.py`, `region.py`, `player.py` | Source-backed world, campaign, region and player artwork editors |
 | `workspace_edits.py` | Backed-up source transactions and Pokémon protection |
 | `GAME_ATLAS.md` | Game systems and guided experiments |
 | `source/pokeemerald/` | Editable upstream source snapshot |
