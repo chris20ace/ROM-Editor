@@ -165,11 +165,67 @@ class WorldMapTests(unittest.TestCase):
         self.assertIn('EverGrandeCity', catalog['components'][0]['names'])
         self.assertEqual(rows['Route101']['y'] + rows['Route101']['height'], rows['LittlerootTown']['y'])
         self.assertEqual(rows['Route101']['x'], rows['LittlerootTown']['x'])
-        self.assertTrue(any({overlap['a'], overlap['b']} == {'Route116', 'VerdanturfTown'} for overlap in catalog['overlaps']))
-        self.assertEqual(len(catalog['conflicts']), 3)
+        self.assertEqual(catalog['overlaps'], [])
+        self.assertEqual(len(catalog['conflicts']), 1)
+        self.assertEqual({catalog['conflicts'][0]['a'], catalog['conflicts'][0]['b']}, {'Route103', 'Route110'})
         self.assertIn('LittlerootTown_BrendansHouse_1F', rows)
         self.assertIn('FarawayIsland_Interior', rows)
         self.assertTrue(rows['Route104_Prototype']['archived'])
+
+    def test_real_town_coastlines_and_routes_use_source_offsets_and_keep_only_one_display_break(self):
+        source_paths = [SOURCE / 'data/maps' / name / 'map.json' for name in
+                        ('DewfordTown', 'Route107', 'FallarborTown', 'Route114', 'VerdanturfTown', 'Route116', 'Route103', 'Route110')]
+        before = {path: path.read_bytes() for path in source_paths}
+        catalog = WorldMap(SOURCE).catalog()
+        rows = self.rows(catalog)
+        # These three joins previously inherited a two-cell error from the first
+        # BFS path, tearing the coastline and drawing Route116 over Verdanturf.
+        for left, right in (('DewfordTown', 'Route107'), ('Route114', 'FallarborTown')):
+            self.assertEqual(rows[right]['x'], rows[left]['x'] + rows[left]['width'])
+            self.assertEqual(rows[right]['y'], rows[left]['y'])
+        self.assertEqual(rows['VerdanturfTown']['y'], rows['Route116']['y'] + rows['Route116']['height'])
+        self.assertEqual(rows['VerdanturfTown']['x'], rows['Route116']['x'] + 80)
+        # Every source connection remains independently checkable; the one
+        # incompatible cycle closure must stay visible in the catalog.
+        reported = {frozenset((row['a'], row['b'])) for row in catalog['conflicts']}
+        ids = {row['id']: row for row in rows.values()}
+        for name in catalog['components'][0]['names']:
+            data = json.loads((SOURCE / 'data/maps' / name / 'map.json').read_bytes())
+            a = rows[name]
+            for connection in data.get('connections') or []:
+                direction = connection['direction']
+                if direction not in {'up', 'down', 'left', 'right'}:
+                    continue
+                b = ids[connection['map']]
+                offset = connection['offset']
+                expected = {'up': (a['x'] + offset, a['y'] - b['height']),
+                            'down': (a['x'] + offset, a['y'] + a['height']),
+                            'left': (a['x'] - b['width'], a['y'] + offset),
+                            'right': (a['x'] + a['width'], a['y'] + offset)}[direction]
+                actual = b['x'], b['y']
+                self.assertEqual(actual != expected, frozenset((name, b['name'])) in reported)
+        self.assertEqual(len(reported), 1)
+        self.assertEqual(before, {path: path.read_bytes() for path in source_paths})
+
+    def test_inconsistent_cycle_prefers_route_display_break_and_keeps_bridge_attached(self):
+        self.add_map('A', 20, 20)
+        self.add_map('B', 20, 20)
+        self.add_map('CTown', 20, 20, 'MAP_TYPE_TOWN')
+        self.add_map('DetachedLeaf', 8, 8, 'MAP_TYPE_INDOOR')
+        self.links('LittlerootTown', [('A', 'right', 0)])
+        self.links('A', [('B', 'right', 0), ('CTown', 'down', 20)])
+        self.links('B', [('CTown', 'down', 2), ('DetachedLeaf', 'up', 0)])
+        catalog = self.model.catalog()
+        rows = self.rows(catalog)
+        self.assertEqual(len(catalog['conflicts']), 1)
+        self.assertEqual({catalog['conflicts'][0]['a'], catalog['conflicts'][0]['b']}, {'A', 'B'})
+        self.assertEqual(rows['CTown']['x'], rows['A']['x'] + 20)
+        self.assertEqual(rows['CTown']['x'], rows['B']['x'] + 2)
+        self.assertEqual(rows['CTown']['y'], rows['B']['y'] + 20)
+        self.assertEqual(rows['DetachedLeaf']['x'], rows['B']['x'])
+        self.assertEqual(rows['DetachedLeaf']['y'] + 8, rows['B']['y'])
+        self.assertEqual(len(catalog['components']), 1)
+        self.assertEqual(catalog, self.model.catalog())
 
     def test_area_clusters_keep_homes_and_floors_with_owners_in_natural_order(self):
         self.add_map('LittlerootTown_House_10F', 8, 8, 'MAP_TYPE_INDOOR')

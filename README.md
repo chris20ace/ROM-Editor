@@ -44,6 +44,7 @@ Read **[CONNECTING_YOUR_WORLD.md](CONNECTING_YOUR_WORLD.md)** for the town/route
 ## What is ready
 
 - A world canvas containing all maps. Connected landscapes keep their walking geometry; interiors, cave floors and special locations are arranged in labeled area groups. Browse the four area categories, zoom into any map, paint terrain, place people, and save several edited maps together.
+- Route loops that cannot fit a flat picture are shown with an amber shifted-join marker. Inspect a marker's connection preview to see the maps aligned by the game's actual travel offset. The layout minimizes these breaks without modifying source maps.
 - A 2D map canvas with the original tiles, a sprite catalog, paint/fill/rectangle/pick tools, zoom, undo/redo, map resizing and blank-map creation.
 - Add, move, edit and delete map events. Buildings and trees are assembled from terrain tiles; entrances use warp events.
 - A separate editor for region-map artwork and named locations. The region picture and the maps the player walks through are edited independently.

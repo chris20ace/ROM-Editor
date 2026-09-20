@@ -2,7 +2,8 @@
 
 Each connected component uses real metatile coordinates. Detached interiors,
 floors and other maps are packed by area; those offsets do not imply travel links.
-Inconsistent source cycles and overlapping rectangles are exposed to the UI.
+Inconsistent source cycles use the fewest practical display breaks; every
+unsatisfied source connection and overlapping rectangle is exposed to the UI.
 """
 from collections import Counter, deque
 import math
@@ -56,6 +57,88 @@ def _delta(direction, offset, source_size, target_size):
     if direction == 'right':
         return source_size[0], offset
     raise ValueError('Expected a cardinal map connection.')
+
+
+def _improve_component_positions(names, positions, dimensions, maps, edges):
+    """Reduce arbitrary BFS seams without changing a single source constraint.
+
+    Emerald's local connections need not close in a flat global embedding. A
+    breadth-first traversal can spread one contradictory offset over several
+    distant town boundaries. Try leaving individual constraints out of placement
+    (never out of validation), and keep only a strictly better arrangement.
+    Reciprocal connection records are one physical constraint. Bridge omissions
+    are rejected, so a connected world can never be split into display shelves.
+    """
+    members = set(names)
+    constraints = {}
+    for a, b, _direction, _offset, dx, dy in edges:
+        if a not in members or b not in members:
+            continue
+        if a > b:
+            a, b, dx, dy = b, a, -dx, -dy
+        key = (a, b, dx, dy)
+        constraints.setdefault(key, (a, b, dx, dy))
+    if not constraints:
+        return
+    ordered = sorted(constraints)
+    adjacency = {name: [] for name in names}
+    for key in ordered:
+        a, b, dx, dy = constraints[key]
+        adjacency[a].append((b, dx, dy, key))
+        adjacency[b].append((a, -dx, -dy, key))
+
+    def score(candidate):
+        conflicts, town_seams, distance = 0, 0, 0
+        for a, b, dx, dy in constraints.values():
+            ax, ay = candidate[a]
+            bx, by = candidate[b]
+            ex, ey = bx - ax - dx, by - ay - dy
+            if ex or ey:
+                conflicts += 1
+                town_seams += any(maps[name].get('map_type') in {'MAP_TYPE_TOWN', 'MAP_TYPE_CITY'} for name in (a, b))
+                distance += abs(ex) + abs(ey)
+        overlap_area = 0
+        for index, a in enumerate(names):
+            ax, ay = candidate[a]
+            aw, ah = dimensions[a]
+            for b in names[index + 1:]:
+                bx, by = candidate[b]
+                bw, bh = dimensions[b]
+                width = min(ax + aw, bx + bw) - max(ax, bx)
+                height = min(ay + ah, by + bh) - max(ay, by)
+                if width > 0 and height > 0:
+                    overlap_area += width * height
+        return conflicts, town_seams, overlap_area, distance
+
+    current = {name: positions[name] for name in names}
+    current_score = score(current)
+    if current_score[0] == 0:
+        return  # Preserve exact placement for already consistent components.
+    omitted = frozenset()
+    while True:
+        best, best_score, best_omitted = None, current_score, omitted
+        for excluded in ordered:
+            if excluded in omitted:
+                continue
+            trial_omitted = omitted | {excluded}
+            candidate = {names[0]: (0, 0)}
+            queue = deque([names[0]])
+            while queue:
+                name = queue.popleft()
+                x, y = candidate[name]
+                for target, dx, dy, key in adjacency[name]:
+                    if key not in trial_omitted and target not in candidate:
+                        candidate[target] = (x + dx, y + dy)
+                        queue.append(target)
+            if len(candidate) != len(names):
+                continue
+            candidate_score = score(candidate)
+            if candidate_score < best_score:
+                best, best_score, best_omitted = candidate, candidate_score, trial_omitted
+        if best is None:
+            break
+        current, current_score, omitted = best, best_score, best_omitted
+    positions.update(current)
 
 
 class WorldMap:
@@ -135,6 +218,9 @@ class WorldMap:
                 label = _human_name(seed) + (' area' if len(names) > 1 else '')
             components.append({'id': seed, 'names': names, 'label': label, 'archived': archived})
 
+        for component in components:
+            _improve_component_positions(component['names'], positions, dimensions, maps, edges)
+
         def translate(component, target_x, target_y):
             bounds = _bounds(component['names'], positions, dimensions)
             shift_x, shift_y = target_x - bounds['x'], target_y - bounds['y']
@@ -143,8 +229,8 @@ class WorldMap:
                 positions[name] = (x + shift_x, y + shift_y)
             component['bounds'] = _bounds(component['names'], positions, dimensions)
 
-        # Hoenn stays exactly where the outdoor-only canvas placed it. Everything
-        # else receives one rigid component translation into four category shelves.
+        # Hoenn anchors the main canvas. Everything else receives one rigid
+        # component translation into four category shelves.
         # Even a custom connection between different areas keeps its geometry.
         main = next((component for component in components if 'LittlerootTown' in component['names']), None)
         if main is None and components:
@@ -284,7 +370,7 @@ class WorldMap:
                                'overlaps': sorted(map_overlaps[name]),
                                'preview_url': f'/api/world/maps/{name}/preview.png'})
         if conflicts:
-            warnings.append(f'{len(conflicts)} map connection seams disagree around map cycles. Positions follow a consistent traversal; no source connections were changed.')
+            warnings.append(f'{len(conflicts)} map connection seams disagree around map cycles. The canvas reduces these display breaks while preserving town boundaries where possible; no source connections were changed.')
         if overlaps:
             warnings.append(f'{len(overlaps)} map rectangles overlap. Select the map you want to edit to bring its terrain forward.')
         if len(components) > 1:

@@ -2,7 +2,7 @@
 
 Start in the [World canvas](http://127.0.0.1:8765/worldmap). Every map is available there, organized into **Towns & cities**, **Routes**, **Caves & landmarks**, and **Other areas**. This includes homes, shops, gyms, cave floors, underwater maps, secret bases and special facilities. Connected landscapes keep their walking connections; separate rooms and floors sit in labeled area groups on the same canvas. Their display arrangement does not invent new travel links.
 
-Zoom out to see everything, or select an area or map to focus it. Paint terrain and edit people directly without changing pages. Save world writes the edited maps together. Emerald has a few route joins whose dimensions do not form a perfectly flat region; the editor reports those seams and uses the selected map when areas overlap.
+Zoom out to see everything, or select an area or map to focus it. Paint terrain and edit people directly without changing pages. Save world writes the edited maps together. Emerald's original route loop does not close on a single flat grid. The canvas minimizes display mismatches, preserves town boundaries, and marks the remaining shifted join in amber. Choose **shifted map join · inspect** to see its actual connection alignment or focus the location. This changes only the world-view arrangement, not source map dimensions or travel links.
 
 Choose **Edit story, settings & more** to open the selected place's dialogue, map settings, doors and stairs, or buildings in a panel over the world. The same panel includes starters, gym leaders, player appearance, encounters, items, music references and source logic. **Back to world** keeps unfinished forms available and refreshes saved changes. Each editor has its own Save button.
 
