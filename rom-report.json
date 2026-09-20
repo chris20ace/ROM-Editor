@@ -1,0 +1,15 @@
+{
+  "file": "Pokemon - Emerald Version (USA, Europe).gba",
+  "title": "POKEMON EMER",
+  "game_code": "BPEE",
+  "maker": "01",
+  "revision": 0,
+  "size": 16777216,
+  "sha1": "f3ae088181bf583e55daf962a92bb46f4f1d07b7",
+  "sha256": "a9dec84dfe7f62ab2220bafaef7479da0929d066ece16a6885f6226db19085af",
+  "expected_sha1": "f3ae088181bf583e55daf962a92bb46f4f1d07b7",
+  "matches": true,
+  "header_checksum_valid": true,
+  "source": "Matching public decompilation snapshot; not automatically extracted source.",
+  "original_untouched": true
+}

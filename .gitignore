@@ -1,0 +1,39 @@
+# Downloaded source snapshot (provenance.json remains tracked).
+/source/pokeemerald/
+
+# Local backups, cached inventory, logs, and running-server state.
+/.workbench/
+/__pycache__/
+*.py[cod]
+.venv/
+venv/
+node_modules/
+.env
+.env.*
+!.env.example
+
+# ROMs and generated compiler/build artifacts.
+*.gba
+*.gb
+*.gbc
+*.sav
+*.srm
+*.state
+*.elf
+*.o
+*.a
+*.d
+/build/
+/dist/
+/artifacts/
+/output/
+/outputs/
+*.log
+*.tmp
+*.bak
+
+# Editor and operating-system files.
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp

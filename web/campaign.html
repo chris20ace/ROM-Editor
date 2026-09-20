@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Campaign studio · Emerald Workbench</title>
+  <link rel="stylesheet" href="/campaign.css">
+  <script src="/campaign.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/world"><span class="brand-mark">E</span><span>EMERALD <strong>WORKBENCH</strong></span></a>
+    <nav aria-label="Workbench"><a href="/worldmap">World canvas</a><a href="/areas">Towns &amp; routes</a><a href="/world">World editor</a><a href="/connections">Connect places</a><a href="/region">Region map</a><a href="/campaign" class="active" aria-current="page">Campaign</a><a href="/">Source library</a></nav>
+    <span class="protected">● Pokémon preserved</span>
+  </header>
+  <main>
+    <div class="page-heading"><div><p class="eyebrow">WRITE YOUR OWN ADVENTURE</p><h1>Campaign studio<span>.</span></h1><p class="subtitle">A new story. Familiar Pokémon. Make the world yours.</p></div><div class="save-area"><span id="save-state" role="status">Loading project…</span><button id="save" class="primary" disabled>Save changes</button></div></div>
+    <div class="tabbar" role="tablist" aria-label="Campaign editors"><button role="tab" id="tab-story" aria-selected="true" data-tab="story">01 <span>Story & dialogue</span></button><button role="tab" id="tab-starters" aria-selected="false" data-tab="starters">02 <span>Starter choices</span></button><button role="tab" id="tab-trainers" aria-selected="false" data-tab="trainers">03 <span>Trainers & gyms</span></button></div>
+    <div class="workspace"><aside id="sidebar" aria-label="Choose content"></aside><section id="editor" role="tabpanel" aria-labelledby="tab-story"><div class="empty">Opening your campaign…</div></section></div>
+    <footer>Source edits are backed up when saved. Build and playtest your ROM to experience your changes. <a href="/guide">Project guide ↗</a></footer>
+  </main>
+  <div id="toast" role="status" aria-live="polite" hidden></div>
+  <dialog id="discard-dialog"><h2>Keep your changes?</h2><p>You have unsaved edits. Save them before opening another page, or discard them to continue.</p><div class="dialog-actions"><button id="stay">Keep editing</button><button id="discard" class="danger">Discard changes</button></div></dialog>
+  <dialog id="conversation-dialog" aria-labelledby="conversation-title">
+    <form id="conversation-form">
+      <h2 id="conversation-title">A new conversation.</h2>
+      <p>This saves a new conversation script in the selected map. Paste its script label into an NPC’s <strong>Script to run</strong> field in World studio.</p>
+      <p id="conversation-error" class="form-error" role="alert" hidden></p>
+      <label class="field">Script label<input id="conversation-label" class="mono" pattern="[A-Za-z_][A-Za-z0-9_]*" required maxlength="180"><small id="conversation-prefix"></small></label>
+      <label class="field">Conversation<textarea id="conversation-text" rows="6" maxlength="15999" required placeholder="Hello, {PLAYER}!&#10;Welcome to our town."></textarea></label>
+      <p class="form-help">Press Enter for a new line, or use \n, \l and \p. The final $ end marker is added if needed. Keep each game text line short.</p>
+      <div class="dialog-actions"><button id="conversation-cancel" type="button">Cancel</button><button id="conversation-save" class="primary" type="submit">Save conversation to source</button></div>
+    </form>
+  </dialog>
+</body>
+</html>

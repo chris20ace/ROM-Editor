@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Emerald Workbench</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <aside class="sidebar" aria-label="Workspace navigation">
+    <a href="#overview" class="brand" aria-label="Emerald Workbench home">
+      <span class="brand-mark" aria-hidden="true"><i></i></span>
+      <span>EMERALD<span class="brand-subtitle">WORKBENCH</span></span>
+    </a>
+    <div class="workspace-label">YOUR WORKSPACE</div>
+    <nav class="navigation">
+      <a class="nav-item" href="/worldmap"><span class="nav-icon" aria-hidden="true">▧</span>World canvas</a>
+      <a class="nav-item" href="/areas"><span class="nav-icon" aria-hidden="true">⌂</span>Towns &amp; routes</a>
+      <a class="nav-item" href="/world"><span class="nav-icon" aria-hidden="true">▦</span>World editor</a>
+      <a class="nav-item" href="/connections"><span class="nav-icon" aria-hidden="true">⇄</span>Connect places</a>
+      <a class="nav-item" href="/region"><span class="nav-icon" aria-hidden="true">◇</span>Region map</a>
+      <a class="nav-item" href="/campaign"><span class="nav-icon" aria-hidden="true">☷</span>Story &amp; trainers</a>
+      <button class="nav-item active" data-view="overview"><span class="nav-icon" aria-hidden="true">◈</span>Overview</button>
+      <button class="nav-item" data-view="pokemon"><span class="nav-icon" aria-hidden="true">◉</span>Pokémon</button>
+      <button class="nav-item" data-view="moves"><span class="nav-icon" aria-hidden="true">ϟ</span>Moves</button>
+      <button class="nav-item" data-view="files"><span class="nav-icon" aria-hidden="true">▤</span>Source explorer</button>
+      <button class="nav-item" data-view="changes"><span class="nav-icon" aria-hidden="true">⑂</span>My changes<span id="changes-badge" class="count-badge" hidden>0</span></button>
+    </nav>
+    <div class="sidebar-guide">
+      <span class="small-label">START SOMETHING NEW</span>
+      <h2>First, get to know<br>the game.</h2>
+      <p>Explore the pieces. Change a little. Make it your own.</p>
+      <a href="/guide" target="_blank" rel="noopener" class="guide-link">Read the project guide <span aria-hidden="true">↗</span></a>
+    </div>
+    <div class="sidebar-footer"><span class="status-dot" aria-hidden="true"></span><span>Local workspace<span class="sidebar-muted">Original ROM stays untouched</span></span></div>
+  </aside>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="breadcrumb"><span class="breadcrumb-home" aria-hidden="true">⌂</span><span>Workspace</span><span class="breadcrumb-divider">/</span><strong id="breadcrumb-view">Overview</strong></div>
+      <span class="local-pill"><span class="status-dot" aria-hidden="true"></span> ON YOUR COMPUTER</span>
+    </header>
+    <main id="main" tabindex="-1">
+      <div id="global-error" class="notice error" role="alert" hidden></div>
+      <section id="view-overview" class="view" aria-labelledby="overview-title">
+        <div class="page-eyebrow"><span class="eyebrow-line"></span> A NEW ADVENTURE STARTS HERE</div>
+        <div class="intro-row">
+          <div><h1 id="overview-title">Your world.<br><span>The same Pokémon.</span></h1><p class="intro-text">Rebuild the land, story, and people of Emerald.<br>Open the world editor to reshape an existing map or create a blank one.</p><a class="button primary" href="/worldmap">Open the whole world canvas →</a></div>
+          <div class="starter-scene" aria-label="Treecko, Torchic, and Mudkip game sprites">
+            <div class="scene-orbit"></div><span class="scene-spark spark-one" aria-hidden="true">✦</span><span class="scene-spark spark-two" aria-hidden="true">+</span>
+            <div class="starter starter-treecko"><img src="/asset?path=graphics%2Fpokemon%2Ftreecko%2Ffront.png" alt="Treecko"><span>001</span></div>
+            <div class="starter starter-torchic"><img src="/asset?path=graphics%2Fpokemon%2Ftorchic%2Ffront.png" alt="Torchic"><span>004</span></div>
+            <div class="starter starter-mudkip"><img src="/asset?path=graphics%2Fpokemon%2Fmudkip%2Ffront.png" alt="Mudkip"><span>007</span></div>
+            <span class="scene-caption">EVERY ADVENTURE HAS A STARTING POINT</span>
+          </div>
+        </div>
+        <div id="rom-card" class="rom-card loading-block" aria-live="polite">Reading your workspace…</div>
+        <div id="stats-grid" class="stats-grid"></div>
+        <div class="section-heading"><div><p class="small-label green">THE BUILDING BLOCKS</p><h2>Look under the hood</h2></div><span class="section-note">One game. Many connected systems.</span></div>
+        <div id="category-grid" class="category-grid"></div>
+        <div class="first-edit-banner"><div class="first-edit-symbol" aria-hidden="true">↗</div><div><h3>Build the adventure around your Pokémon.</h3><p>Paint maps, place objects, write dialogue, and choose starters and gym teams. Pokémon definitions stay protected.</p></div><a class="button primary" href="/campaign">Edit your campaign →</a></div>
+        <div id="build-note" class="build-note"></div>
+      </section>
+      <section id="view-files" class="view" aria-labelledby="files-title" hidden>
+        <div class="page-eyebrow"><span class="eyebrow-line"></span> FOLLOW YOUR CURIOSITY</div>
+        <div class="page-title-row"><div><h1 id="files-title" class="compact-title">Source explorer</h1><p class="page-description">Find the maps, scripts, graphics, and code that bring the world to life.</p></div><a href="/guide" target="_blank" rel="noopener" class="button secondary">Editing guide ↗</a></div>
+        <div class="explorer-layout">
+          <div class="file-browser panel">
+            <div class="browser-controls"><label class="field-label" for="file-search">FIND A FILE</label><div class="search-field"><span aria-hidden="true">⌕</span><input id="file-search" type="search" placeholder="Search a file path…" autocomplete="off"></div><label class="sr-only" for="file-category">Filter by system</label><select id="file-category"><option value="">All systems</option></select></div>
+            <div class="list-heading"><span id="file-count">Loading files…</span><span>PATH</span></div><div id="file-list" class="file-list" role="list" aria-label="Source files"></div>
+          </div>
+          <div id="file-detail" class="file-detail panel"><div class="empty-state"><span class="empty-icon" aria-hidden="true">▤</span><h2>A closer look starts here</h2><p>Select a file to view an asset or edit its source.<br>Your original ROM is never modified.</p></div></div>
+        </div>
+      </section>
+      <section id="view-records" class="view" aria-labelledby="records-title" hidden>
+        <div class="page-eyebrow"><span class="eyebrow-line"></span> THE DETAILS MAKE THE DIFFERENCE</div>
+        <div class="page-title-row"><div><h1 id="records-title" class="compact-title">Pokémon</h1><p id="records-description" class="page-description">Explore the original creatures. Pokémon species data stays protected.</p></div><span class="soft-pill">SOURCE-BACKED EDITOR</span></div>
+        <div class="record-layout"><div class="record-browser panel"><div class="browser-controls"><label class="field-label" for="record-search">FIND YOUR STARTING POINT</label><div class="search-field"><span aria-hidden="true">⌕</span><input id="record-search" type="search" placeholder="Search Pokémon…" autocomplete="off"></div></div><div class="list-heading"><span id="record-count">Loading…</span><span id="record-list-label">POKÉMON</span></div><div id="record-list" class="record-list" role="list"></div></div><div id="record-detail" class="record-detail panel"><div class="empty-state"><span class="empty-icon" aria-hidden="true">◉</span><h2>Choose a Pokémon</h2><p>Select a name to explore its attributes.</p></div></div></div>
+      </section>
+      <section id="view-changes" class="view" aria-labelledby="changes-title" hidden>
+        <div class="page-eyebrow"><span class="eyebrow-line"></span> YOUR ADVENTURE, TAKING SHAPE</div>
+        <div class="page-title-row"><div><h1 id="changes-title" class="compact-title">My changes</h1><p class="page-description">A clear view of the source files you’ve made your own.</p></div><a id="export-patch" class="button primary" href="/api/export" download>Export rebuild files (.zip) <span aria-hidden="true">↓</span></a></div>
+        <div class="notice info"><span aria-hidden="true">↺</span><div><strong>There’s always a way back.</strong><p>Open Saved history in World editor to undo a saved map, region, campaign, or source edit. All affected files are restored together.</p></div></div>
+        <div id="changes-list" class="panel changes-panel"></div>
+        <p class="subtle-note">This list tracks files saved through the workbench. The ZIP includes edited source and binary map layouts. Building a playable ROM is a separate step; see the <a href="/guide" target="_blank" rel="noopener">project guide</a>.</p>
+      </section>
+      <footer class="page-footer"><span>EMERALD WORKBENCH</span><span>Explore. Experiment. Make it yours.</span></footer>
+    </main>
+  </div>
+  <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-description">
+    <form method="dialog">
+      <span class="dialog-icon" aria-hidden="true">↺</span>
+      <h2 id="confirm-title">Unsaved changes</h2>
+      <p id="confirm-description"></p>
+      <div class="dialog-actions"><button class="button secondary" value="cancel" autofocus>Keep editing</button><button id="confirm-action" class="button primary" value="confirm">Discard edits</button></div>
+    </form>
+  </dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>
