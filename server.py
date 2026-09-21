@@ -399,6 +399,10 @@ class Handler(BaseHTTPRequestHandler):
                 from world_positions import WorldPositions
                 with self.project.lock:
                     return self.respond(200, WorldPositions(self.project.root).read(self.project.world._maps()))
+            if request.path == '/api/worldmap/links':
+                from world_link_sync import WorldLinkSync
+                with self.project.lock:
+                    return self.respond(200, WorldLinkSync(self.project).catalog())
             if request.path.startswith('/api/world/maps/') and request.path.endswith('/atlas.png'):
                 return self.respond(200, self.project.world.atlas(request.path.split('/')[-2], value('primary') or None, value('secondary') or None), 'image/png')
             if request.path.startswith('/api/world/maps/') and request.path.endswith('/preview.png'):
@@ -453,6 +457,7 @@ class Handler(BaseHTTPRequestHandler):
                       '/tile-selection.js': 'tile-selection.js', '/tile-move.js': 'tile-move.js',
                       '/worldmap-selection.js': 'worldmap-selection.js', '/worldmap-boxes.js': 'worldmap-boxes.js',
                       '/worldmap-shapes.js': 'worldmap-shapes.js',
+                      '/worldmap-links.js': 'worldmap-links.js',
                       '/player': 'player.html', '/player.js': 'player.js', '/player.css': 'player.css',
                       '/worldtools.js': 'worldtools.js', '/worldtools.css': 'worldtools.css'}
             if request.path in static:
@@ -519,6 +524,11 @@ class Handler(BaseHTTPRequestHandler):
                 from world_positions import WorldPositions
                 with self.project.lock:
                     result = WorldPositions(self.project.root).save(body, self.project.world._maps())
+            elif self.path in ('/api/worldmap/links/preview', '/api/worldmap/links'):
+                from world_link_sync import WorldLinkSync
+                with self.project.lock:
+                    links = WorldLinkSync(self.project)
+                    result = links.preview(body) if self.path.endswith('/preview') else links.commit(body)
             elif self.path in ('/api/worldmap/expand/preview', '/api/worldmap/expand',
                                '/api/worldmap/merge/preview', '/api/worldmap/merge'):
                 from world_reshape import WorldReshaper

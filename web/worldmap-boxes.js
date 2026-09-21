@@ -21,7 +21,7 @@
       $('#map-box-hint').textContent=S.tool==='splitmap'
         ? 'Split the whole route: draw a straight line across its box, or choose Split in half.'
         : marqueeReady?'Drag a rectangle around map boxes. Shift adds to the group.'
-          : 'Shift-click maps to add or remove them. Drag a selected map to move the group. Positions save automatically.';
+          : 'Shift-click maps to add or remove them. Drag a selected map to move the group. Preview connections to apply this layout to the game.';
       $('#map-box-count').hidden=!arranging;
       $('#map-box-count').textContent=`${count} map${count===1?'':'s'} selected`;
       $('#select-map-boxes').hidden=!arranging;
@@ -53,7 +53,7 @@
       originals=new Map(S.maps.map(row=>[row.name,{x:row.x,y:row.y}]));undoMoves=[];selected.clear();marqueeReady=false;apply();sync();
     }
     async function savePositions(updates){
-      const saved=await api('/api/worldmap/positions',{revision,positions:updates});revision=saved.revision;positions=saved.positions;apply();sync();
+      const saved=await api('/api/worldmap/positions',{revision,positions:updates});revision=saved.revision;positions=saved.positions;apply();sync();d.positionsChanged?.();
     }
     function restoreOrigins(drag){for(const[name,origin]of Object.entries(drag.origins||{})){const row=map(name);if(row)Object.assign(row,origin);}updateBounds();}
     function cancel(){
@@ -128,7 +128,7 @@
       }
       if(!Object.keys(updates).length){sync();return true;}
       S.finishing=true;status();
-      try{await savePositions(updates);undoMoves.push(previous);toast(`${Object.keys(updates).length===1?'Map position':'Map positions'} saved. Undo map move restores the whole group.`);}
+      try{await savePositions(updates);undoMoves.push(previous);toast(`${Object.keys(updates).length===1?'Map position':'Map positions'} saved. Use Connections → Preview connections to update game paths. Undo map move restores the group.`);}
       catch(err){restoreOrigins(drag);toast(err.message,true);}
       finally{S.finishing=false;status();render();}
       return true;
