@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light"><title>Build your ROM · Emerald Workbench</title>
+  <link rel="stylesheet" href="/build.css"><script src="/build.js" defer></script>
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="/worldmap"><span aria-hidden="true">◈</span><div>EMERALD<small>WORKBENCH</small></div></a><nav aria-label="Workbench"><a href="/worldmap">Your world</a><a href="/campaign?tab=trainers">Trainers &amp; gyms</a><a href="/player">Character appearance</a><a href="/build" class="active" aria-current="page">Build ROM</a></nav><span class="local-label">ON YOUR COMPUTER</span></header>
+  <main>
+    <div class="page-heading"><div><p class="eyebrow">YOUR NEXT ADVENTURE</p><h1>From your world.<br><span>To your game.</span></h1><p class="intro">Turn your saved edits into a Game Boy Advance ROM.<br>Download the <strong>.gba</strong> file and open it in your emulator.</p></div><div class="cartridge" aria-hidden="true"><div class="cartridge-label"><span>EMERALD</span><strong>YOUR<br>ADVENTURE</strong><small>GAME BOY ADVANCE</small></div><div class="cartridge-ridges"></div></div></div>
+    <div id="page-error" class="notice error" role="alert" hidden></div>
+    <div class="build-grid">
+      <section class="card new-build" aria-labelledby="new-build-heading"><p class="eyebrow">MAKE A PLAYABLE FILE</p><h2 id="new-build-heading">Build your ROM.</h2><p>Each build captures a separate copy of your saved game. You can keep editing while it compiles. Keep the local editor running until the build finishes.</p>
+        <form id="build-form"><label for="rom-name">ROM name <span>Optional</span></label><input id="rom-name" name="name" type="text" maxlength="64" placeholder="My Emerald Adventure" autocomplete="off"><div class="save-note"><strong>Save your edits first.</strong><p>Pending changes in open editors are not included. After moving map boxes, apply their walking connections to the game before building.</p><a href="/worldmap">Return to your world ↗</a></div><button id="start-build" class="button primary" type="submit" disabled>Build ROM <span aria-hidden="true">→</span></button></form>
+        <div id="toolchain-status" class="toolchain" role="status"><span class="status-dot" aria-hidden="true"></span><span id="toolchain-message">Checking the local builder…</span></div>
+      </section>
+      <section class="card build-result" aria-labelledby="build-heading"><div class="section-title"><div><p class="eyebrow">BUILD PROGRESS</p><h2 id="build-heading">Ready when you are.</h2></div><span id="build-badge" class="badge">No build yet</span></div>
+        <p id="build-message">Your generated file will appear here when the build finishes.</p><div id="build-progress" class="progress" role="progressbar" aria-label="ROM build in progress" hidden><span></span></div>
+        <dl id="build-facts" class="build-facts" hidden></dl>
+        <div id="build-error" class="notice error" role="alert" hidden></div>
+        <div id="retry-section" class="retry-section" hidden><button id="retry-build" class="button" type="button" disabled>Retry saved copy</button><p>Retries this same saved version and reuses its completed build work. To include new edits, save them in the editors, then choose <strong>Build ROM</strong>.</p></div>
+        <a id="download-rom" class="button primary download" download hidden>Download ROM <span aria-hidden="true">↓</span></a>
+        <p id="playtest-note" class="playtest-note" hidden>The ROM compiled successfully. Playtest your opening, walking connections, doors, and battles in an emulator before sharing it.</p>
+        <details id="log-details" class="log-details" hidden><summary>Build log <span id="log-status"></span></summary><div class="log-toolbar"><span>Messages from the local builder</span><button id="copy-log" type="button" class="text-button">Copy log</button></div><pre id="build-log" tabindex="0" aria-label="Build output"></pre></details>
+      </section>
+    </div>
+    <section class="card history" aria-labelledby="history-heading"><div class="section-title"><div><p class="eyebrow">YOUR SAVED BUILDS</p><h2 id="history-heading">Every version, kept.</h2></div><button id="refresh" class="button" type="button">Refresh</button></div><p class="history-intro">Download a successful build again or inspect the log from an earlier attempt.</p><div id="build-history"><p class="empty">Loading build history…</p></div></section>
+    <footer><span>Builds use saved source. Your original ROM stays untouched.</span><a href="/guide">Project guide ↗</a></footer>
+  </main>
+</body>
+</html>

@@ -13,6 +13,7 @@
     {id:'trainers', group:'Campaign', label:'Trainers & gym leaders', detail:'Teams, levels, portraits, items and battle settings.', url:()=>'/campaign?tab=trainers'},
     {id:'player', group:'Campaign', label:'Character appearance', detail:'Edit players, trainers, gym leaders, NPCs, and objects.', url:()=>'/player'},
     {id:'region', group:'Campaign', label:'PokéNav region picture', detail:'Edit the in-game region artwork and named grid.', url:()=>'/region'},
+    {id:'build', group:'Play your game', label:'Build ROM', detail:'Compile your saved game and download a playable .gba file.', url:()=>'/build'},
     {id:'encounters', group:'Game systems', label:'Wild encounters', detail:'Edit the source table of encounters across all maps.', url:()=>source('src/data/wild_encounters.json')},
     {id:'items', group:'Game systems', label:'Items & economy', detail:'Edit item definitions; shops and rewards use scripts.', url:()=>source('src/data/items.h')},
     {id:'moves', group:'Game systems', label:'Moves & battles', detail:'Inspect and edit the game’s move records.', url:()=>'/#moves'},
@@ -23,7 +24,7 @@
   const byId = new Map(tools.map(tool => [tool.id, tool]));
   const aliases = {settings:'map', mapsettings:'map', dialogue:'story', gyms:'trainers', campaign:'story', buildings:'areas'};
   const editors = new Map();
-  const allowedPaths = new Set(['/', '/index.html', '/world', '/world.html', '/campaign', '/campaign.html', '/region', '/connections', '/areas', '/player', '/guide']);
+  const allowedPaths = new Set(['/', '/index.html', '/world', '/world.html', '/campaign', '/campaign.html', '/region', '/connections', '/areas', '/player', '/build', '/guide']);
   const state = {selected:null, active:null, sourceChanged:false, opening:false, closing:false, hooks:null, returnFocus:null};
   const node = (tag, className, text) => {const element=document.createElement(tag);if(className)element.className=className;if(text!==undefined)element.textContent=text;return element;};
   const nice = name => String(name || '').replace(/([a-z\d])([A-Z])/g,'$1 $2').replace(/_/g,' ');
@@ -102,7 +103,7 @@
   }
   function mappedInfo(url){
     let id=url.pathname.startsWith('/campaign')?(url.searchParams.get('tab')||'story'):
-      url.pathname.startsWith('/world')?'map':url.pathname==='/connections'?'connections':url.pathname==='/region'?'region':url.pathname==='/areas'?'areas':url.pathname==='/player'?'player':url.hash==='#moves'?'moves':'source';
+      url.pathname.startsWith('/world')?'map':url.pathname==='/connections'?'connections':url.pathname==='/region'?'region':url.pathname==='/areas'?'areas':url.pathname==='/player'?'player':url.pathname==='/build'?'build':url.hash==='#moves'?'moves':'source';
     const tool=byId.get(id)||byId.get('source'), name=url.searchParams.get('map');
     return{tool:tool.id,label:`${tool.label}${name?' · '+nice(name):''}`,detail:tool.detail};
   }
@@ -134,7 +135,7 @@
       win.fetch=function(resource,init){
         const method=String(init?.method||resource?.method||'GET').toUpperCase();
         const requestUrl=new URL(typeof resource==='string'?resource:resource?.url||'',win.location.href);
-        const mutation=method==='POST'&&requestUrl.origin===location.origin&&requestUrl.pathname.startsWith('/api/');
+        const mutation=method==='POST'&&requestUrl.origin===location.origin&&requestUrl.pathname.startsWith('/api/')&&!requestUrl.pathname.startsWith('/api/build/');
         const promise=fetch(resource,init);if(!mutation)return promise;
         entry.mutations.add(promise);
         promise.then(response=>{if(response.ok){state.sourceChanged=true;updateResume();}},()=>{}).finally(()=>entry.mutations.delete(promise));

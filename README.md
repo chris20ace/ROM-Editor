@@ -31,6 +31,7 @@ The workbench runs at **http://127.0.0.1:8765**. Choose the workspace for what y
 | [Region map](http://127.0.0.1:8765/region) | The actual in-game PokéNav/town-map artwork, named location grid, display names and location bounds. |
 | [Campaign studio](http://127.0.0.1:8765/campaign) | Local map dialogue and event scripts, the three starter choices, and 854 trainer battles including 40 gym leader battles and rematches. Trainer choices have portrait thumbnails and each party slot shows its Pokémon sprite. |
 | [Character appearance](http://127.0.0.1:8765/player) | 255 sprite sheets grouped into players, gym leaders, trainers, NPCs, and objects. Edit individual frames, battle portraits and backs, animation sheets, palettes, and PNG imports/exports. |
+| [Build ROM](http://127.0.0.1:8765/build) | Generate and download a `.gba` from saved edits, follow compiler progress, and revisit earlier builds. |
 | [Source explorer](http://127.0.0.1:8765/#files) | Advanced scripts and engine logic, shops, encounters, shared text, menus, music references and other source files. |
 
 On the world canvas, **Edit story, settings & more** opens these tools in a panel for the selected place. Switch tools or choose **Back to world** without losing unsaved forms. Save inside each editor; returning to the world refreshes saved source changes.
@@ -79,11 +80,15 @@ Story conditions, cutscenes, badges, rewards, shops, special travel and other cu
 
 The map editor uses the game's existing tilesets and object catalog. Player, trainer, gym leader, and NPC appearance can be redrawn directly in Character appearance, keeping the original frame sizes and order. Freehand cuts rearrange existing terrain pixels; drawing entirely new terrain artwork needs a palette-aware graphics tool; MIDI arrangements need an audio tool. The source explorer is available for deeper logic changes.
 
-## Saving source is not building a game
+## Build a playable ROM
 
-Edits affect the local source snapshot. They do not modify the supplied ROM, produce a new ROM, or change a running game. No ROM build or emulator installation has been completed or verified for this workspace.
+Save your edits, open **Build ROM**, optionally name the download, and choose **Build ROM**. The builder copies the saved source into a separate folder and compiles that copy in the background. Pending forms and unsaved canvas edits are not included. After moving map boxes, use **Connections → Apply to game** to save the intended walking connections before building.
 
-The next stage is to set up the build tools described in the pinned source's `INSTALL.md`, verify an unchanged baseline, compile your edits, and test the resulting game. The upstream [build instructions](https://github.com/pret/pokeemerald/blob/master/INSTALL.md) are also available for reference. Map editing is already built into this workbench.
+On a new Windows installation, run `python setup_rom_tools.py` once. It downloads a checksum-verified [MSYS2 base](https://www.msys2.org/docs/installer/), installs build packages, compiles [libpng](https://www.libpng.org/pub/png/libpng.html) and the pinned [pret/agbcc compiler](https://github.com/pret/agbcc), and writes `.workbench/rom-toolchain.json`. The tools live under `%LOCALAPPDATA%/EmeraldWorkbench/tools`; no administrator access, WSL, or global PATH change is needed. Installation requires an internet connection. The original source's `INSTALL.md` documents the underlying build requirements.
+
+Each build keeps its own source ZIP, file hashes, compilation directory, log, and completed ROM under `%LOCALAPPDATA%/EmeraldWorkbench/builds`. Build history is in `.workbench/rom-builds`. One build runs at a time. A download appears only after compilation succeeds and the ROM's boot header and checksum pass validation. Failed builds keep their error log. After correcting a tool installation problem, **Retry saved copy** resumes that same source version using its existing compiled files. To include corrected game edits, save them and choose **Build ROM** for a new snapshot. Keep the local editor running until the build finishes. Restarting it interrupts an active build.
+
+Download the `.gba` and open it in a GBA emulator. Successful compilation does not verify gameplay: start a **new save** after restructuring maps, then check your opening story, walking connections, doors, caves, and battles. An old save can contain map IDs or progression state from an earlier version. The original ROM remains unchanged, and saving edits later does not change a ROM you already downloaded—build again for the new version.
 
 For an independent game in another engine, this workspace can help you study the systems, but porting the gameplay and creating suitable assets is a separate project.
 

@@ -1,4 +1,4 @@
-"""Local-only Emerald source and world editor; no ROM writes."""
+"""Local-only Emerald editor and ROM builder; the original ROM stays untouched."""
 from __future__ import annotations
 
 import argparse
@@ -98,6 +98,7 @@ class Project:
         self._world = None
         self._campaign = None
         self._connections = None
+        self._builds = None
         self.index = {}
         for path in sorted(self.source.rglob('*')):
             if not path.is_file() or path.is_symlink() or '.git' in path.parts:
@@ -145,6 +146,14 @@ class Project:
             self._connections = Connections(self.source)
         return self._connections
 
+    @property
+    def builds(self):
+        with self.lock:
+            if self._builds is None:
+                from rom_builds import RomBuilds
+                self._builds = RomBuilds(self)
+            return self._builds
+
     def path(self, rel):
         if not isinstance(rel, str) or rel not in self.index or '\\' in rel or ':' in rel:
             raise ValueError('Choose an existing file from this source project.')
@@ -177,7 +186,8 @@ class Project:
                         audio=counts['audio'] + counts['midi'], maps=sum(p.endswith('/map.json') for p in self.index),
                         pokemon=record_counts['pokemon'], moves=record_counts['moves']),
             categories=cats, editors=editors, pokemon_protected=True,
-            build=dict(ready=False, note='Source editing is ready. ROM compilation and playtesting are not configured. See the guide before building.'))
+            build=dict(ready=self.builds.status()['toolchain']['ready'],
+                       note='Generate a .gba from saved game edits on the Build ROM page. Test your build in an emulator before sharing.', url='/build'))
 
     def file(self, rel):
         path = self.path(rel)
@@ -352,6 +362,13 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if request.path == '/api/session':
                 return self.respond(200, {'token': self.project.token})
+            if request.path == '/api/build':
+                return self.respond(200, self.project.builds.status())
+            if request.path == '/api/build/jobs':
+                return self.respond(200, self.project.builds.get(value('id')))
+            if request.path == '/api/build/download':
+                artifact = self.project.builds.download(value('id'))
+                return self.respond(200, Path(artifact['path']).read_bytes(), 'application/octet-stream', artifact['filename'])
             if request.path == '/api/overview':
                 return self.respond(200, self.project.overview())
             if request.path == '/api/files':
@@ -472,6 +489,7 @@ class Handler(BaseHTTPRequestHandler):
                       '/worldmap-shapes.js': 'worldmap-shapes.js',
                       '/worldmap-links.js': 'worldmap-links.js',
                       '/player': 'player.html', '/player.js': 'player.js', '/player.css': 'player.css',
+                      '/build': 'build.html', '/build.html': 'build.html', '/build.js': 'build.js', '/build.css': 'build.css',
                       '/worldtools.js': 'worldtools.js', '/worldtools.css': 'worldtools.css'}
             if request.path in static:
                 path = ROOT / 'web' / static[request.path]
@@ -498,7 +516,14 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(size))
             if not isinstance(body, dict):
                 raise ValueError('Expected a JSON object.')
-            if self.path == '/api/file':
+            if self.path == '/api/build/start':
+                with self.project.lock:
+                    result = self.project.builds.start(body)
+            elif self.path == '/api/build/cancel':
+                result = self.project.builds.cancel(body.get('id'))
+            elif self.path == '/api/build/retry':
+                result = self.project.builds.retry(body.get('id'))
+            elif self.path == '/api/file':
                 result = self.project.write(body.get('path'), body.get('content'), body.get('expected_sha256'))
             elif self.path == '/api/restore':
                 result = self.project.write(body.get('path'), None, body.get('expected_sha256'), restore=True)
