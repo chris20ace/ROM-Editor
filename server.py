@@ -395,6 +395,10 @@ class Handler(BaseHTTPRequestHandler):
                 from worldmap import WorldMap
                 with self.project.lock:
                     return self.respond(200, WorldMap(self.project.source).catalog())
+            if request.path == '/api/worldmap/positions':
+                from world_positions import WorldPositions
+                with self.project.lock:
+                    return self.respond(200, WorldPositions(self.project.root).read(self.project.world._maps()))
             if request.path.startswith('/api/world/maps/') and request.path.endswith('/atlas.png'):
                 return self.respond(200, self.project.world.atlas(request.path.split('/')[-2], value('primary') or None, value('secondary') or None), 'image/png')
             if request.path.startswith('/api/world/maps/') and request.path.endswith('/preview.png'):
@@ -447,7 +451,7 @@ class Handler(BaseHTTPRequestHandler):
                       '/areas': 'areas.html', '/areas.js': 'areas.js', '/areas.css': 'areas.css',
                       '/worldmap': 'worldmap.html', '/worldmap.js': 'worldmap.js', '/worldmap.css': 'worldmap.css',
                       '/tile-selection.js': 'tile-selection.js', '/tile-move.js': 'tile-move.js',
-                      '/worldmap-selection.js': 'worldmap-selection.js',
+                      '/worldmap-selection.js': 'worldmap-selection.js', '/worldmap-boxes.js': 'worldmap-boxes.js',
                       '/player': 'player.html', '/player.js': 'player.js', '/player.css': 'player.css',
                       '/worldtools.js': 'worldtools.js', '/worldtools.css': 'worldtools.css'}
             if request.path in static:
@@ -510,6 +514,20 @@ class Handler(BaseHTTPRequestHandler):
                     saved = self.project.commit(plan, 'World canvas: ' + str(len(maps)) + ' maps')
                     result = {'saved': [self.project.world.get_map(m['name']) for m in maps],
                               'transaction': saved['id'], 'message': saved['message']}
+            elif self.path == '/api/worldmap/positions':
+                from world_positions import WorldPositions
+                with self.project.lock:
+                    result = WorldPositions(self.project.root).save(body, self.project.world._maps())
+            elif self.path in ('/api/worldmap/split/preview', '/api/worldmap/split'):
+                from route_split import RouteSplitter
+                with self.project.lock:
+                    splitter = RouteSplitter(self.project.world)
+                    preview = splitter.preview(body)
+                    if self.path.endswith('/preview'):
+                        result = preview
+                    else:
+                        saved = self.project.commit(splitter.plan(body), 'Split route: ' + str(body.get('name')))
+                        result = {**preview, 'transaction': saved['id'], 'message': saved['message']}
             elif self.path in ('/api/connections/edge', '/api/connections/warp'):
                 with self.project.lock:
                     edge = self.path.endswith('/edge')

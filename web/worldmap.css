@@ -9,3 +9,9 @@
 .tile-selection-options .button,.tile-selection-options .text-button{font-size:9px;white-space:nowrap}
 .toolbar .tools{flex-wrap:wrap}
 .toolbar{min-height:52px;height:auto}
+
+.map-box-options{display:flex;align-items:center;gap:12px;padding:10px 18px;background:#e4eef0;border-bottom:1px solid #b9d0d6;color:#285867;font:11px var(--sans)}
+.map-box-options[hidden]{display:none}
+.map-box-options span{flex:1;line-height:1.5}
+.map-box-options button{white-space:nowrap}
+.route-split-preview{display:block;max-width:100%;max-height:260px;image-rendering:pixelated;margin:14px auto;background:#dce8d0;border:1px solid #bdcdaa}
