@@ -1,6 +1,5 @@
 (() => {
   'use strict';
-  const Views=window.WorldMapViews;
   if(window.parent!==window&&window.parent.WorldTools){window.parent.WorldTools.returnToWorld(new URLSearchParams(location.search).get('map'));return;}
   const $=(q,root=document)=>root.querySelector(q), $$=(q,root=document)=>[...root.querySelectorAll(q)];
   const clone=value=>JSON.parse(JSON.stringify(value));
@@ -15,54 +14,37 @@
     buffers:new Map(),loads:new Map(),atlases:new Map(),previews:new Map(),nativePreviews:new Map(),nativeInFlight:new Set(),nativeFailed:new Set(),nativeEpoch:0,nativeRunning:-1,sprites:new Map(),selected:null,selectionRequest:0,panel:'tiles',mode:'terrain',tool:'select',
     tile:0,erasers:new Map(),object:'OBJ_EVENT_GFX_BOY_1',place:false,event:null,camera:{x:0,y:0},scale:1,width:1,height:1,dpr:1,space:false,drag:null,hover:null,
     history:[],future:[],frame:null,toastTimer:null,dialogResolve:null,preloadDone:0,previewDone:0,minimap:null,pointerActive:null,press:0,generation:0,
-    category:'all',openCategories:new Set(),openAreas:new Set(),previewRunning:-1,previewInFlight:new Set(),previewFailed:new Set(),viewportLoadTimer:null,
-    view:'world',viewRevision:0,connected:null,viewByName:new Map()};
+    category:'all',openCategories:new Set(),openAreas:new Set(),previewRunning:-1,previewInFlight:new Set(),previewFailed:new Set(),viewportLoadTimer:null,navigationRequest:0,transitionTargets:[]};
   const viewport=$('#world-viewport'),canvas=$('#world-canvas'),ctx=canvas.getContext('2d');
   function node(tag,cls='',text){const n=document.createElement(tag);n.className=cls;if(text!==undefined)n.textContent=text;return n;}
   async function api(url,body){const res=await fetch(url,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json','X-Workbench-Token':S.token},body:JSON.stringify(body)});let data;try{data=await res.json();}catch{throw new Error(`The server returned an unreadable response (${res.status}).`);}if(!res.ok)throw new Error(typeof data.error==='string'?data.error:data.error?.message||data.message||`Request failed (${res.status}).`);return data;}
   function toast(message,bad=false){clearTimeout(S.toastTimer);$('#toast').textContent=message;$('#toast').classList.toggle('error',bad);$('#toast').hidden=false;S.toastTimer=setTimeout(()=>$('#toast').hidden=true,bad?8000:4500);}
   function error(message=''){$('#error').textContent=message;$('#error').hidden=!message;}
-  function map(name=S.selected){return S.viewByName.get(name)||S.byName.get(name);}
-  function viewMaps(){return S.connected?.maps||S.maps;}
-  function viewConflicts(){return S.connected?.conflicts||S.catalog?.conflicts||[];}
-  // Only whole-map display origins change. Edit buffers always keep source coordinates.
-  function applyView(kind,anchorName=S.selected,{position=null,fit=true}={}){
-    if(S.drag||S.finishing)return false;
-    if(kind==='connected'){
-      const row=map(anchorName);if(!row)return false;
-      const connected=Views.build(S.catalog,anchorName,position||{x:row.x,y:row.y});
-      if(!connected.maps.length)return false;
-      S.connected=connected;S.viewByName=new Map(connected.maps.map(row=>[row.name,row]));S.view='connected';S.category='all';$('#category-filter').value='all';
-    }else{S.connected=null;S.viewByName.clear();S.view='world';}
-    S.viewRevision++;S.hover=null;status();renderPlaces();render();scheduleNearbyBuffers();
-    if(fit)fitBounds(S.connected?.bounds||S.catalog?.bounds);
-    return true;
-  }
-  async function changeView(kind,anchorName=S.selected,options={}){await finishStroke();if(S.busy||S.finishing)return false;return applyView(kind,anchorName,options);}
-  function updateViewControls(){
-    const connected=!!S.connected,working=S.busy||S.finishing;
-    $('#connected-view').classList.toggle('active',connected);$('#connected-view').setAttribute('aria-pressed',String(connected));$('#connected-view').disabled=!S.ready||working;
-    $('#world-overview').hidden=!connected;$('#world-overview').disabled=working;
-    $('#view-description').textContent=connected?`${nice(S.connected.anchor)} + ${Math.max(0,S.connected.maps.length-1)} connected maps · original tile grids`:'World overview · select a place to edit';
-    $('#view-description').title=connected?'Neighbors use the original game connection offsets. Every map remains a complete, unscaled tile grid.':'Some original connection loops do not fit one global grid. Connected view shows the selected map’s exact local joins.';
-    $('#world-minimap span').textContent=connected?'CONNECTED MAPS':'YOUR WORLD';
-    const host=$('#connected-joins'),signature=connected?JSON.stringify(S.connected.maps.map(row=>[row.name,row.x,row.y])):'';
-    host.hidden=!connected;
+  function map(name=S.selected){return S.byName.get(name);}
+  function updateMapConnections(){
+    const host=$('#map-connections'),row=map(),working=!S.ready||S.busy||S.finishing;
+    const links=(row?.connections||[]).map(link=>({...link,destination:(link.name&&map(link.name))||S.maps.find(other=>other.id===link.map)})).filter(link=>link.destination);
+    const signature=JSON.stringify([row?.name,links.map(link=>[link.direction,link.destination.name])]);
+    $('#connections-description').textContent=row?`From ${mapTitle(row)}`:'Select a place to see its map connections';
     if(host.dataset.signature!==signature){
       host.dataset.signature=signature;host.replaceChildren();
-      if(connected){
-        const anchor=map(S.connected.anchor);host.append(node('span','','Edit a join:'));
-        for(const neighbor of S.connected.maps.filter(row=>row.name!==anchor.name)){
-          const outgoing=(anchor.connections||[]).find(link=>link.name===neighbor.name);
-          const incoming=(neighbor.connections||[]).find(link=>link.name===anchor.name);
-          const direction=outgoing?.direction||({up:'down',down:'up',left:'right',right:'left'})[incoming?.direction];
-          if(!direction)continue;
-          const button=node('button','text-button',nice(neighbor.name));button.type='button';button.setAttribute('aria-label',`Edit join with ${nice(neighbor.name)}`);
-          button.onclick=()=>focusJoin({a:anchor.name,b:neighbor.name,direction,offset:outgoing?.offset??-incoming.offset}).catch(err=>toast(err.message,true));host.append(button);
-        }
-        if(S.connected.maps.length===1)host.replaceChildren(node('span','','No walking connections · use doors to enter interiors'));
+      const arrows={up:'↑',down:'↓',left:'←',right:'→',dive:'↓',emerge:'↑'};
+      for(const link of links){
+        const destination=link.destination,button=node('button','connection-destination',`${arrows[link.direction]||'↗'} ${nice(destination.name)}`);
+        button.type='button';button.title=`${nice(link.direction)} connection · ${mapTitle(destination)}`;button.setAttribute('aria-label',`Go ${nice(link.direction).toLowerCase()} to ${nice(destination.name)} on this canvas`);
+        button.onclick=()=>navigateTo(destination.name).catch(err=>toast(err.message,true));host.append(button);
       }
+      if(!links.length)host.append(node('span','connection-empty',row?'No map-edge connections · doorways are in People & events':'All maps stay on this canvas'));
     }
+    $$('button',host).forEach(button=>button.disabled=working);
+  }
+  async function navigateTo(name){
+    const request=++S.navigationRequest,selection=S.selectionRequest;
+    await finishStroke();
+    if(request!==S.navigationRequest||selection!==S.selectionRequest||S.busy||S.finishing||!map(name))return false;
+    const loading=selectMap(name);fitSelection();
+    // Delayed artwork must never recenter a newer navigation action.
+    return loading;
   }
   function buffer(name=S.selected){return S.buffers.get(name);}
   function categoryOf(row){return row.area_kind||S.areaByMap.get(row.name)?.kind||'special';}
@@ -73,7 +55,7 @@
   function snapshot(b){return clone({width:b.data.width,height:b.data.height,cells:b.data.cells,border:b.data.border,map:b.data.map,layout:b.data.layout});}
   function fingerprint(b){return JSON.stringify(snapshot(b));}
   function updateDirty(b){b.dirty=fingerprint(b)!==b.saved;}
-  function status(){updateViewControls();const seams=viewConflicts();$('#layout-joins').hidden=!seams.length;$('#layout-joins').textContent=`Edit ${seams.length===1?'map join':seams.length+' map joins'} in connected view`;$('#layout-joins').disabled=!S.ready;const dirty=dirtyBuffers(),working=S.busy||S.finishing;$('#save-world').disabled=!S.ready||working||!dirty.length;$('#save-world').firstChild.textContent=dirty.length?`Save ${dirty.length===1?'world':dirty.length+' places'} `:'Save world ';$('#save-status').textContent=working?'Saving / finishing edits…':dirty.length?`${dirty.length} place${dirty.length===1?' has':'s have'} unsaved changes`:'All changes saved';$('#dirty-count').textContent=dirty.length?`${dirty.length} edited places`:'No unsaved changes';$('#undo').disabled=!S.history.length||working;$('#redo').disabled=!S.future.length||working;$('#saved-history').disabled=!S.ready||working;$('#new-place').disabled=!S.ready||working;const ready=S.maps.filter(row=>S.previews.has(row.name)||buffer(row.name)?.raster).length;$('#load-status').textContent=ready<S.maps.length?`${ready} / ${S.maps.length} map previews loaded`:`${S.maps.length} maps · all artwork ready`;$('#world-count').textContent=S.catalog?`${S.maps.length} MAPS · ${S.areas.length} AREAS · ONE CANVAS`:'ALL AREAS. ONE EDITABLE WORLD.';document.title=`${dirty.length?'● ':''}Your World · Emerald Workbench`;}
+  function status(){updateMapConnections();const dirty=dirtyBuffers(),working=S.busy||S.finishing;$('#save-world').disabled=!S.ready||working||!dirty.length;$('#save-world').firstChild.textContent=dirty.length?`Save ${dirty.length===1?'world':dirty.length+' places'} `:'Save world ';$('#save-status').textContent=working?'Saving / finishing edits…':dirty.length?`${dirty.length} place${dirty.length===1?' has':'s have'} unsaved changes`:'All changes saved';$('#dirty-count').textContent=dirty.length?`${dirty.length} edited places`:'No unsaved changes';$('#undo').disabled=!S.history.length||working;$('#redo').disabled=!S.future.length||working;$('#saved-history').disabled=!S.ready||working;$('#new-place').disabled=!S.ready||working;const ready=S.maps.filter(row=>S.previews.has(row.name)||buffer(row.name)?.raster).length;$('#load-status').textContent=ready<S.maps.length?`${ready} / ${S.maps.length} map previews loaded`:`${S.maps.length} maps · all artwork ready`;$('#world-count').textContent=S.catalog?`${S.maps.length} MAPS · ${S.areas.length} AREAS · ONE CANVAS`:'ALL AREAS. ONE EDITABLE WORLD.';document.title=`${dirty.length?'● ':''}Your World · Emerald Workbench`;}
   function dialog(title,html,submit='Continue',info=false){if($('#dialog').open)return Promise.resolve(null);$('#dialog-title').textContent=title;$('#dialog-content').innerHTML=html;$('#dialog-submit').textContent=submit;$('#dialog-submit').hidden=info;$('#dialog-cancel').textContent=info?'Got it':'Cancel';$('#dialog').showModal();return new Promise(resolve=>S.dialogResolve=resolve);}
   function closeDialog(value){$('#dialog').close();const resolve=S.dialogResolve;S.dialogResolve=null;if(resolve)resolve(value);}
   $('#dialog-form').onsubmit=e=>{e.preventDefault();closeDialog(Object.fromEntries(new FormData(e.currentTarget)));};$('#dialog-close').onclick=()=>closeDialog(null);$('#dialog-cancel').onclick=()=>closeDialog(null);$('#dialog').oncancel=e=>{e.preventDefault();closeDialog(null);};
@@ -99,7 +81,7 @@
   const NATIVE_CACHE_PIXELS=32*1024*1024,NATIVE_CACHE_MAPS=40;
   function nativeCandidates(){
     if(!S.ready)return[];
-    const candidates=viewMaps().filter(row=>included(row)&&visible(row)&&!buffer(row.name)?.raster&&Math.max(row.width,row.height)*16>256&&Math.max(row.width,row.height)*S.scale*S.dpr>256);
+    const candidates=S.maps.filter(row=>visible(row)&&!buffer(row.name)?.raster&&Math.max(row.width,row.height)*16>256&&Math.max(row.width,row.height)*S.scale*S.dpr>256);
     candidates.sort((a,b)=>(a.name===S.selected?-1e9:Math.hypot(a.x+a.width/2-S.camera.x,a.y+a.height/2-S.camera.y))-(b.name===S.selected?-1e9:Math.hypot(b.x+b.width/2-S.camera.x,b.y+b.height/2-S.camera.y))||a.name.localeCompare(b.name));
     let pixels=0;return candidates.filter(row=>{const size=row.width*row.height*256;if(pixels+size>NATIVE_CACHE_PIXELS)return false;pixels+=size;return true;}).slice(0,NATIVE_CACHE_MAPS);
   }
@@ -120,13 +102,13 @@
     }}));
     if(generation===S.generation&&epoch===S.nativeEpoch)S.nativeRunning=-1;
   }
-  function scheduleNearbyBuffers(){clearTimeout(S.viewportLoadTimer);if(!S.ready)return;S.viewportLoadTimer=setTimeout(()=>{pruneRasters();pruneNativePreviews();preloadNative();if(S.scale<4||S.mode==='events')return;const chosen=map();if(!chosen)return;const generation=S.generation,nearby=viewMaps().filter(row=>row.name!==S.selected&&included(row)&&visible(row)&&Math.max(row.x,chosen.x)<=Math.min(row.x+row.width,chosen.x+chosen.width)&&Math.max(row.y,chosen.y)<=Math.min(row.y+row.height,chosen.y+chosen.height)).slice(0,4);for(const row of nearby)ensureBuffer(row.name).then(b=>{if(generation===S.generation&&visible(row)&&S.scale>=4){if(!b.raster)rasterize(b);render();}}).catch(()=>{});},180);}
+  function scheduleNearbyBuffers(){clearTimeout(S.viewportLoadTimer);if(!S.ready)return;S.viewportLoadTimer=setTimeout(()=>{pruneRasters();pruneNativePreviews();preloadNative();if(S.scale<4||S.mode==='events')return;const chosen=map();if(!chosen)return;const generation=S.generation,nearby=S.maps.filter(row=>row.name!==S.selected&&visible(row)&&Math.max(row.x,chosen.x)<=Math.min(row.x+row.width,chosen.x+chosen.width)&&Math.max(row.y,chosen.y)<=Math.min(row.y+row.height,chosen.y+chosen.height)).slice(0,4);for(const row of nearby)ensureBuffer(row.name).then(b=>{if(generation===S.generation&&visible(row)&&S.scale>=4){if(!b.raster)rasterize(b);render();}}).catch(()=>{});},180);}
   function screen(x,y){return{x:(x-S.camera.x)*S.scale+S.width/2,y:(y-S.camera.y)*S.scale+S.height/2};}
   function world(clientX,clientY){const r=canvas.getBoundingClientRect();return{x:(clientX-r.left-S.width/2)/S.scale+S.camera.x,y:(clientY-r.top-S.height/2)/S.scale+S.camera.y};}
   function contains(row,p){return p.x>=row.x&&p.y>=row.y&&p.x<row.x+row.width&&p.y<row.y+row.height;}
-  function hit(p){const chosen=map();if(chosen&&(!S.connected||S.viewByName.has(chosen.name))&&included(chosen)&&contains(chosen,p))return chosen;return viewMaps().filter(row=>included(row)&&contains(row,p)).sort((a,b)=>a.width*a.height-b.width*b.height)[0]||null;}
+  function hit(p){const chosen=map();if(chosen&&contains(chosen,p))return chosen;return S.maps.filter(row=>contains(row,p)).sort((a,b)=>a.width*a.height-b.width*b.height)[0]||null;}
   function local(row,p){return{x:Math.floor(p.x-row.x),y:Math.floor(p.y-row.y)};}
-  function visible(row){if(!row||S.connected&&!S.viewByName.has(row.name))return false;row=map(row.name)||row;const p=screen(row.x,row.y);return p.x+row.width*S.scale>=0&&p.y+row.height*S.scale>=0&&p.x<=S.width&&p.y<=S.height;}
+  function visible(row){if(!row)return false;const p=screen(row.x,row.y);return p.x+row.width*S.scale>=0&&p.y+row.height*S.scale>=0&&p.x<=S.width&&p.y<=S.height;}
   function render(){if(S.frame!==null)return;S.frame=requestAnimationFrame(()=>{S.frame=null;drawWorld();});}
   function resizeCanvas(){const r=viewport.getBoundingClientRect();S.width=Math.max(1,r.width);S.height=Math.max(1,r.height);S.dpr=Math.min(2,window.devicePixelRatio||1);canvas.width=Math.round(S.width*S.dpr);canvas.height=Math.round(S.height*S.dpr);render();scheduleNearbyBuffers();}
   function sprite(id){const info=S.objectById.get(id);if(!info?.preview_url)return null;if(!S.sprites.has(id)){const image=new Image();S.sprites.set(id,image);image.onload=render;image.onerror=()=>S.sprites.set(id,null);image.src=info.preview_url;}const image=S.sprites.get(id);return image?.complete&&image.naturalWidth?image:null;}
@@ -144,97 +126,67 @@
     }
     if($('#show-bounds').checked||row.name===S.selected||b?.dirty){ctx.strokeStyle=row.name===S.selected?'#f8f3bd':b?.dirty?'#c4a349':'#426b444f';ctx.lineWidth=row.name===S.selected?2:1;ctx.strokeRect(p.x+.5,p.y+.5,w-1,h-1);if(row.name===S.selected){ctx.strokeStyle='#356642';ctx.lineWidth=1;ctx.strokeRect(p.x-1,p.y-1,w+2,h+2);}}
   }
-  function joinView(seam){
-    const a=map(seam.a),b=map(seam.b),target=seam.expected;
-    if(!a||!b)return null;
-    const vertical=seam.direction==='left'||seam.direction==='right';
-    const edge=vertical?(seam.direction==='left'?a.x:a.x+a.width):(seam.direction==='up'?a.y:a.y+a.height);
-    const start=vertical?Math.max(a.y,target.y):Math.max(a.x,target.x);
-    const end=vertical?Math.min(a.y+a.height,target.y+b.height):Math.min(a.x+a.width,target.x+b.width);
-    if(end<=start)return null;
-    const crop=vertical?{x:edge-8,y:start,width:16,height:end-start}:{x:start,y:edge-8,width:end-start,height:16};
-    return{a,b,target,vertical,edge,start,end,crop};
-  }
-  async function focusJoin(seam){
-    const initialSelection=S.selectionRequest,initialView=S.viewRevision;
-    await finishStroke();if(S.busy||S.finishing||initialSelection!==S.selectionRequest||initialView!==S.viewRevision)return;
-    const loading=selectMap(seam.a),request=S.selectionRequest,revision=S.viewRevision;
-    await loading;
-    if(request!==S.selectionRequest||revision!==S.viewRevision||S.selected!==seam.a)return;
-    if(!applyView('connected',seam.a,{fit:false}))return;
-    const b=map(seam.b);if(!b)return;
-    const view=joinView({...seam,expected:{x:b.x,y:b.y}});
-    if(view){const c=view.crop;fitBounds({x:c.x-4,y:c.y-4,width:c.width+8,height:c.height+8});}
-    else fitSelection();
-    await ensureBuffer(seam.b);render();
-  }
-  function drawLayoutJoins(){
-    if(S.scale<2)return;
-    for(const seam of viewConflicts()){
-      const view=joinView(seam);if(!view||!included(view.a)||!included(view.b)||!visible(view.a)&&!visible(view.b))continue;
-      const from=view.vertical?{x:view.edge,y:view.start}:{x:view.start,y:view.edge};
-      const to=view.vertical?{x:view.edge,y:view.end}:{x:view.end,y:view.edge};
-      ctx.save();ctx.strokeStyle='#c37523';ctx.lineWidth=3;ctx.setLineDash([6,4]);
-      for(const delta of [{x:0,y:0},seam.delta]){const p=screen(from.x+delta.x,from.y+delta.y),q=screen(to.x+delta.x,to.y+delta.y);ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(q.x,q.y);ctx.stroke();}
-      ctx.setLineDash([]);const center=screen((from.x+to.x)/2,(from.y+to.y)/2),text=`Shifted join · ${Math.abs(seam.delta.x)+Math.abs(seam.delta.y)} tiles`;
-      ctx.font='10px "Segoe UI",Arial,sans-serif';const width=ctx.measureText(text).width+14;
-      const x=Math.max(4,Math.min(S.width-width-4,center.x+8)),y=Math.max(4,Math.min(S.height-24,center.y-10));
-      ctx.fillStyle='#fff0cfee';ctx.fillRect(x,y,width,21);ctx.fillStyle='#8e5418';ctx.textAlign='left';ctx.textBaseline='top';ctx.fillText(text,x+7,y+5);ctx.restore();
+  function drawTransitions(labelsOnly){
+    if(labelsOnly)S.transitionTargets=[];
+    const opposite={up:'down',down:'up',left:'right',right:'left'};
+    for(const transition of S.catalog?.transitions||[]){
+      const a=map(transition.a),b=map(transition.b);if(!a||!b||!transition.source||!transition.target)continue;
+      const source=screen(transition.source.x,transition.source.y),target=screen(transition.target.x,transition.target.y),selected=S.selected===a.name||S.selected===b.name;
+      if(!labelsOnly){
+        ctx.save();ctx.strokeStyle=selected?'#71845cad':'#8a9f7266';ctx.lineWidth=selected?2:1;ctx.setLineDash([5,5]);ctx.beginPath();ctx.moveTo(source.x,source.y);ctx.lineTo(target.x,target.y);ctx.stroke();ctx.restore();continue;
+      }
+      if(!selected&&S.scale<2)continue;
+      const labelId=String(transition.id||'').replace(/^link-/,''),ends=[{point:source,destination:b,direction:transition.direction},{point:target,destination:a,direction:opposite[transition.direction]}];
+      for(const end of ends){
+        const p=end.point;if(p.x<-12||p.y<-12||p.x>S.width+12||p.y>S.height+12)continue;
+        const text=`${labelId?labelId+' · ':''}To ${nice(end.destination.name)}`;ctx.font='10px "Segoe UI",Arial,sans-serif';
+        const width=Math.min(230,ctx.measureText(text).width+16),height=23;
+        let x=p.x+10,y=p.y-height/2;
+        if(end.direction==='left')x=p.x-width-10;
+        if(end.direction==='up'||end.direction==='down'){x=p.x-width/2;y=end.direction==='up'?p.y-height-10:p.y+10;}
+        x=Math.max(4,Math.min(S.width-width-4,x));y=Math.max(4,Math.min(S.height-height-4,y));
+        ctx.save();ctx.fillStyle='#edf6ddeb';ctx.strokeStyle='#789064';ctx.lineWidth=1;ctx.fillRect(x,y,width,height);ctx.strokeRect(x+.5,y+.5,width-1,height-1);ctx.fillStyle='#4f6b3e';ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillText(text,x+8,y+height/2,width-16);ctx.beginPath();ctx.arc(p.x,p.y,4,0,Math.PI*2);ctx.fill();ctx.restore();
+        S.transitionTargets.push({x,y,width,height,name:end.destination.name});
+      }
     }
   }
-  async function showLayoutJoins(){
-    const seams=viewConflicts();if(!seams.length)return;
-    const opened=dialog('Edit connecting maps',`<p>Open a join in connected view to paint and move people across its original game alignment. The maps keep their complete rectangular tile grids.</p><p>World overview returns to every place without discarding edits. The original game's local connections can disagree around a loop, so the overview cannot show every join at its game offset at once.</p>${seams.map((seam,i)=>`<section class="join-card"><h3>${esc(nice(seam.a))} ↔ ${esc(nice(seam.b))}</h3><p>${Math.abs(seam.delta.x)+Math.abs(seam.delta.y)}-tile display shift · ${esc(seam.direction)} connection</p><div class="join-preview" id="join-preview-${i}">Loading the original join…</div><div class="join-actions"><button type="button" class="button tiny" data-join-focus="${i}">Edit this join</button><button type="button" class="button tiny" data-join-edit="${i}">Edit travel connection</button></div></section>`).join('')}`,'Got it',true);
-    $$('[data-join-focus]').forEach(button=>button.onclick=()=>{const seam=seams[Number(button.dataset.joinFocus)];closeDialog(null);focusJoin(seam).catch(err=>toast(err.message,true));});
-    $$('[data-join-edit]').forEach(button=>button.onclick=()=>{const seam=seams[Number(button.dataset.joinEdit)];closeDialog(null);window.WorldTools?.open('connections',{map:seam.a});});
-    for(const [i,seam]of seams.entries()){
-      const host=$(`#join-preview-${i}`),view=joinView(seam);if(!view){host.textContent='These map edges have no common span.';continue;}
-      Promise.all([ensureBuffer(seam.a),ensureBuffer(seam.b)]).then(buffers=>{
-        if(!host.isConnected)return;const c=view.crop,preview=node('canvas');preview.width=c.width*16;preview.height=c.height*16;
-        preview.setAttribute('aria-label',`Original aligned join between ${nice(seam.a)} and ${nice(seam.b)}`);
-        const context=preview.getContext('2d');context.imageSmoothingEnabled=false;context.fillStyle='#dce8d0';context.fillRect(0,0,preview.width,preview.height);
-        const locations=[view.a,view.target];buffers.forEach((b,index)=>context.drawImage(b.raster||rasterize(b),(locations[index].x-c.x)*16,(locations[index].y-c.y)*16));
-        host.replaceChildren(preview,node('small','',`${nice(seam.a)} ↔ ${nice(seam.b)} · connection alignment`));
-      }).catch(err=>{if(host.isConnected)host.textContent=err.message;});
-    }
-    await opened;
-  }
+  function transitionAt(clientX,clientY){const bounds=canvas.getBoundingClientRect(),x=clientX-bounds.left,y=clientY-bounds.top;return S.transitionTargets.findLast(label=>x>=label.x&&y>=label.y&&x<label.x+label.width&&y<label.y+label.height);}
   function drawWorld(){
     ctx.setTransform(S.dpr,0,0,S.dpr,0,0);ctx.imageSmoothingEnabled=false;ctx.clearRect(0,0,S.width,S.height);ctx.fillStyle='#dce8d0';ctx.fillRect(0,0,S.width,S.height);
     const gap=32,origin=screen(0,0);ctx.fillStyle='#bbcdae';for(let x=((origin.x%gap)+gap)%gap;x<S.width;x+=gap)for(let y=((origin.y%gap)+gap)%gap;y<S.height;y+=gap)ctx.fillRect(x,y,1,1);
-    drawAreaRegions(false);
-    const shown=viewMaps().filter(row=>included(row)&&visible(row)),selected=map();shown.filter(row=>row.name!==S.selected).forEach(drawMap);if(selected&&included(selected)&&visible(selected))drawMap(selected);
-    if($('#show-labels').checked){const labels=drawAreaRegions(true);ctx.font='10px "Segoe UI",Arial,sans-serif';ctx.textBaseline='top';ctx.textAlign='left';const ordered=shown.filter(row=>row.name!==S.selected);if(selected&&included(selected)&&visible(selected))ordered.push(selected);ordered.forEach(row=>{const p=screen(row.x,row.y);if(row.name!==S.selected&&(row.width*S.scale<60||row.height*S.scale<32))return;const name=mapTitle(row,row.name===S.selected),width=Math.min(250,ctx.measureText(name).width+14),box={x:p.x+3,y:p.y+3,w:width,h:19};if(row.name!==S.selected&&labels.some(other=>box.x<other.x+other.w&&box.x+box.w>other.x&&box.y<other.y+other.h&&box.y+box.h>other.y))return;labels.push(box);ctx.fillStyle=row.name===S.selected?'#f6ffdfed':'#f0f8e1cf';ctx.fillRect(box.x,box.y,width,19);ctx.fillStyle=row.name===S.selected?'#38623a':'#739158';ctx.fillText(name,p.x+10,p.y+7,236);});}
-    drawLayoutJoins();
+    drawAreaRegions(false);drawTransitions(false);
+    const shown=S.maps.filter(visible),selected=map();shown.filter(row=>row.name!==S.selected).forEach(drawMap);if(selected&&visible(selected))drawMap(selected);
+    if($('#show-labels').checked){const labels=drawAreaRegions(true);ctx.font='10px "Segoe UI",Arial,sans-serif';ctx.textBaseline='top';ctx.textAlign='left';const ordered=shown.filter(row=>row.name!==S.selected);if(selected&&visible(selected))ordered.push(selected);ordered.forEach(row=>{const p=screen(row.x,row.y);if(row.name!==S.selected&&(row.width*S.scale<60||row.height*S.scale<32))return;const name=mapTitle(row,row.name===S.selected),width=Math.min(250,ctx.measureText(name).width+14),box={x:p.x+3,y:p.y+3,w:width,h:19};if(row.name!==S.selected&&labels.some(other=>box.x<other.x+other.w&&box.x+box.w>other.x&&box.y<other.y+other.h&&box.y+box.h>other.y))return;labels.push(box);ctx.fillStyle=row.name===S.selected?'#f6ffdfed':'#f0f8e1cf';ctx.fillRect(box.x,box.y,width,19);ctx.fillStyle=row.name===S.selected?'#38623a':'#739158';ctx.fillText(name,p.x+10,p.y+7,236);});}
+    drawTransitions(true);
     if(S.drag?.rectangle){const a=S.drag.start,b=S.drag.last,p=screen(Math.min(a.x,b.x),Math.min(a.y,b.y));ctx.fillStyle='#f7f0a64d';ctx.fillRect(p.x,p.y,(Math.abs(a.x-b.x)+1)*S.scale,(Math.abs(a.y-b.y)+1)*S.scale);ctx.strokeStyle='#fff8b7';ctx.lineWidth=1;ctx.strokeRect(p.x,p.y,(Math.abs(a.x-b.x)+1)*S.scale,(Math.abs(a.y-b.y)+1)*S.scale);}
     if(S.hover&&S.scale>=4){const row=hit(S.hover);if(row){const p=screen(Math.floor(S.hover.x),Math.floor(S.hover.y));ctx.strokeStyle='#ffffe4';ctx.lineWidth=1.5;ctx.strokeRect(p.x+.5,p.y+.5,S.scale-1,S.scale-1);}}
     $('#zoom-value').textContent=`${Math.round(S.scale/16*100)}%`;drawMinimap();
   }
-  function drawAreaRegions(labelsOnly){if(S.connected)return[];const labels=[],sections=S.catalog?.sections||[],groups=S.catalog?.groups||[];ctx.textAlign='left';ctx.textBaseline='top';for(const section of sections){const rows=(section.names||[]).map(name=>map(name)).filter(row=>row&&included(row));if(!rows.length)continue;const b=section.bounds,p=screen(b.x,b.y),w=b.width*S.scale,h=b.height*S.scale;if(p.x+w<0||p.y+h<0||p.x>S.width||p.y>S.height)continue;const color=categories.find(category=>category.id===section.kind)?.color||'#8ea978';if(!labelsOnly){ctx.fillStyle=color+'0c';ctx.fillRect(p.x-5,p.y-5,w+10,h+10);ctx.strokeStyle=color+'38';ctx.lineWidth=1;ctx.strokeRect(p.x-5,p.y-5,w+10,h+10);}else if(w>90&&h>28){const title=`${section.label||'World surface'} · ${rows.length} maps`;ctx.font='11px "Segoe UI",Arial,sans-serif';const tw=Math.min(270,ctx.measureText(title).width+12),box={x:p.x-3,y:p.y-24,w:tw,h:19};ctx.fillStyle='#f3f9e8ee';ctx.fillRect(box.x,box.y,box.w,box.h);ctx.fillStyle=color;ctx.fillText(title,box.x+6,box.y+4,258);labels.push(box);}}
-    for(const group of groups){if(!(group.names||[]).some(name=>map(name)&&included(map(name))))continue;const b=group.bounds,p=screen(b.x,b.y),w=b.width*S.scale,h=b.height*S.scale;if(p.x+w<0||p.y+h<0||p.x>S.width||p.y>S.height)continue;if(!labelsOnly&&w>45&&h>25){ctx.strokeStyle='#708c582c';ctx.lineWidth=1;ctx.setLineDash([3,4]);ctx.strokeRect(p.x-3,p.y-3,w+6,h+6);ctx.setLineDash([]);}else if(labelsOnly&&w>85&&h>35){ctx.font='10px "Segoe UI",Arial,sans-serif';const width=Math.min(220,ctx.measureText(group.name).width+10),box={x:p.x,y:p.y-18,w:width,h:16};if(labels.some(other=>box.x<other.x+other.w&&box.x+box.w>other.x&&box.y<other.y+other.h&&box.y+box.h>other.y))continue;labels.push(box);ctx.fillStyle='#edf5e0df';ctx.fillRect(box.x,box.y,box.w,box.h);ctx.fillStyle='#829769';ctx.fillText(group.name,box.x+5,box.y+3,210);}}
+  function drawAreaRegions(labelsOnly){const labels=[],sections=S.catalog?.sections||[],groups=S.catalog?.groups||[];ctx.textAlign='left';ctx.textBaseline='top';for(const section of sections){const rows=(section.names||[]).map(name=>map(name)).filter(Boolean);if(!rows.length)continue;const b=section.bounds,p=screen(b.x,b.y),w=b.width*S.scale,h=b.height*S.scale;if(p.x+w<0||p.y+h<0||p.x>S.width||p.y>S.height)continue;const color=categories.find(category=>category.id===section.kind)?.color||'#8ea978';if(!labelsOnly){ctx.fillStyle=color+'0c';ctx.fillRect(p.x-5,p.y-5,w+10,h+10);ctx.strokeStyle=color+'38';ctx.lineWidth=1;ctx.strokeRect(p.x-5,p.y-5,w+10,h+10);}else if(w>90&&h>28){const title=`${section.label||'World surface'} · ${rows.length} maps`;ctx.font='11px "Segoe UI",Arial,sans-serif';const tw=Math.min(270,ctx.measureText(title).width+12),box={x:p.x-3,y:p.y-24,w:tw,h:19};ctx.fillStyle='#f3f9e8ee';ctx.fillRect(box.x,box.y,box.w,box.h);ctx.fillStyle=color;ctx.fillText(title,box.x+6,box.y+4,258);labels.push(box);}}
+    for(const group of groups){if(!(group.names||[]).some(name=>map(name)))continue;const b=group.bounds,p=screen(b.x,b.y),w=b.width*S.scale,h=b.height*S.scale;if(p.x+w<0||p.y+h<0||p.x>S.width||p.y>S.height)continue;if(!labelsOnly&&w>45&&h>25){ctx.strokeStyle='#708c582c';ctx.lineWidth=1;ctx.setLineDash([3,4]);ctx.strokeRect(p.x-3,p.y-3,w+6,h+6);ctx.setLineDash([]);}else if(labelsOnly&&w>85&&h>35){ctx.font='10px "Segoe UI",Arial,sans-serif';const width=Math.min(220,ctx.measureText(group.name).width+10),box={x:p.x,y:p.y-18,w:width,h:16};if(labels.some(other=>box.x<other.x+other.w&&box.x+box.w>other.x&&box.y<other.y+other.h&&box.y+box.h>other.y))continue;labels.push(box);ctx.fillStyle='#edf5e0df';ctx.fillRect(box.x,box.y,box.w,box.h);ctx.fillStyle='#829769';ctx.fillText(group.name,box.x+5,box.y+3,210);}}
     return labels;}
-  function fitBounds(bounds){if(!bounds)return;S.camera={x:bounds.x+bounds.width/2,y:bounds.y+bounds.height/2};S.scale=Math.max(.025,Math.min(32,Math.min((S.width-72)/bounds.width,(S.height-90)/bounds.height)));render();scheduleNearbyBuffers();}
-  async function fitWorld(){if(!await changeView('world',S.selected,{fit:false}))return;S.category='all';$('#category-filter').value='all';renderPlaces();fitBounds(S.catalog?.bounds);}
-  async function fitCategory(){if(!await changeView('world',S.selected,{fit:false}))return;fitBounds(boundsOf(S.maps.filter(included)));}
+  function fitBounds(bounds){if(!bounds)return;S.navigationRequest++;S.camera={x:bounds.x+bounds.width/2,y:bounds.y+bounds.height/2};S.scale=Math.max(.025,Math.min(32,Math.min((S.width-72)/bounds.width,(S.height-90)/bounds.height)));render();scheduleNearbyBuffers();}
+  async function fitWorld(){const request=++S.navigationRequest;await finishStroke();if(request!==S.navigationRequest||S.busy||S.finishing)return;S.category='all';$('#category-filter').value='all';renderPlaces();fitBounds(S.catalog?.bounds);}
+  async function fitCategory(){const request=++S.navigationRequest;await finishStroke();if(request!==S.navigationRequest||S.busy||S.finishing)return;fitBounds(boundsOf(S.maps.filter(included)));}
   function fitSelection(){const row=map();if(row){if(!included(row)){S.category=categoryOf(row);$('#category-filter').value=S.category;renderPlaces();}fitBounds({x:row.x,y:row.y,width:row.width,height:row.height});}}
-  function zoom(multiplier,point){if(!S.catalog)return;const anchor=point||{x:S.width/2,y:S.height/2},before={x:(anchor.x-S.width/2)/S.scale+S.camera.x,y:(anchor.y-S.height/2)/S.scale+S.camera.y};S.scale=Math.max(.025,Math.min(48,S.scale*multiplier));S.camera.x=before.x-(anchor.x-S.width/2)/S.scale;S.camera.y=before.y-(anchor.y-S.height/2)/S.scale;render();scheduleNearbyBuffers();}
-  function drawMinimap(){if(!S.catalog)return;const mini=$('#minimap'),c=mini.getContext('2d'),bounds=S.connected?.bounds||S.catalog.bounds,pad=7,s=Math.min((mini.width-pad*2)/bounds.width,(mini.height-pad*2)/bounds.height),ox=(mini.width-bounds.width*s)/2-bounds.x*s,oy=(mini.height-bounds.height*s)/2-bounds.y*s;S.minimap={s,ox,oy};c.clearRect(0,0,mini.width,mini.height);c.fillStyle='#e8f0d9';c.fillRect(0,0,mini.width,mini.height);viewMaps().forEach(row=>{c.fillStyle=!included(row)?'#cdd5c5':row.name===S.selected?'#396b45':buffer(row.name)?.dirty?'#b8a55a':categories.find(category=>category.id===categoryOf(row))?.color||'#9db783';c.fillRect(ox+row.x*s,oy+row.y*s,Math.max(1,row.width*s),Math.max(1,row.height*s));});c.strokeStyle='#426a3c';c.lineWidth=1;c.strokeRect(ox+(S.camera.x-S.width/(2*S.scale))*s,oy+(S.camera.y-S.height/(2*S.scale))*s,S.width/S.scale*s,S.height/S.scale*s);}
+  function zoom(multiplier,point){if(!S.catalog)return;S.navigationRequest++;const anchor=point||{x:S.width/2,y:S.height/2},before={x:(anchor.x-S.width/2)/S.scale+S.camera.x,y:(anchor.y-S.height/2)/S.scale+S.camera.y};S.scale=Math.max(.025,Math.min(48,S.scale*multiplier));S.camera.x=before.x-(anchor.x-S.width/2)/S.scale;S.camera.y=before.y-(anchor.y-S.height/2)/S.scale;render();scheduleNearbyBuffers();}
+  function drawMinimap(){if(!S.catalog)return;const mini=$('#minimap'),c=mini.getContext('2d'),bounds=S.catalog.bounds,pad=7,s=Math.min((mini.width-pad*2)/bounds.width,(mini.height-pad*2)/bounds.height),ox=(mini.width-bounds.width*s)/2-bounds.x*s,oy=(mini.height-bounds.height*s)/2-bounds.y*s;S.minimap={s,ox,oy};c.clearRect(0,0,mini.width,mini.height);c.fillStyle='#e8f0d9';c.fillRect(0,0,mini.width,mini.height);S.maps.forEach(row=>{c.fillStyle=row.name===S.selected?'#396b45':buffer(row.name)?.dirty?'#b8a55a':categories.find(category=>category.id===categoryOf(row))?.color||'#9db783';c.fillRect(ox+row.x*s,oy+row.y*s,Math.max(1,row.width*s),Math.max(1,row.height*s));});c.strokeStyle='#426a3c';c.lineWidth=1;c.strokeRect(ox+(S.camera.x-S.width/(2*S.scale))*s,oy+(S.camera.y-S.height/(2*S.scale))*s,S.width/S.scale*s,S.height/S.scale*s);}
   function renderPlaces(){
     const query=$('#place-search').value.toLowerCase().replace(/\s/g,''),rows=S.maps.filter(row=>included(row)&&(!query||`${row.name} ${nice(row.name)} ${row.area_name||S.areaByMap.get(row.name)?.name||''} ${row.display_name||''} ${row.role_label||''}`.toLowerCase().replace(/\s/g,'').includes(query))),names=new Set(rows.map(row=>row.name));
     $('#place-count').textContent=`${rows.length} maps`;const frag=document.createDocumentFragment();
     for(const category of categories){if(S.category!=='all'&&S.category!==category.id)continue;const categoryRows=rows.filter(row=>categoryOf(row)===category.id),details=node('details','place-group category-group');details.open=!!query||S.category===category.id||S.openCategories.has(category.id);const summary=node('summary','',category.label);summary.append(node('span','',categoryRows.length));details.append(summary);details.ontoggle=()=>{if(details.open)S.openCategories.add(category.id);else S.openCategories.delete(category.id);};
       const areas=S.areas.filter(area=>area.kind===category.id&&area.maps.some(row=>names.has(row.name)));
       for(const area of areas){const areaRows=area.maps.filter(row=>names.has(row.name)).map(row=>map(row.name)),areaDetails=node('details','area-group');areaDetails.open=!!query||S.openAreas.has(area.id);const areaSummary=node('summary','');areaSummary.append(node('span','area-name',area.name),node('span','area-count',areaRows.length));areaDetails.append(areaSummary);areaDetails.ontoggle=()=>{if(areaDetails.open)S.openAreas.add(area.id);else S.openAreas.delete(area.id);};
-        const areaFocus=node('button','area-focus','Show this whole area');areaFocus.type='button';areaFocus.onclick=async()=>{if(!await changeView('world',S.selected,{fit:false}))return;fitBounds(boundsOf(areaRows.map(row=>S.byName.get(row.name))));};areaDetails.append(areaFocus);let role='';for(const row of areaRows){const roleLabel=row.role_label||area.maps.find(item=>item.name===row.name)?.role_label||'Locations';if(roleLabel!==role){role=roleLabel;areaDetails.append(node('div','role-label',roleLabel));}const button=node('button',`place-row${row.name===S.selected?' active':''}`);button.type='button';button.setAttribute('aria-label',`${mapTitle(row)} · ${roleLabel}`);button.title=mapTitle(row);button.innerHTML=`<span class="place-icon">${row.is_outdoor?'⌁':row.role==='homes'?'⌂':row.role==='gyms'?'◈':'▧'}</span><div><strong>${esc(mapTitle(row,false))}</strong><small>${row.width} × ${row.height} tiles${row.archived?' · archived':''}${row.overlaps?.length?' · overlapping layer':''}</small></div>${buffer(row.name)?.dirty?'<span class="dirty-dot"></span>':''}`;button.onclick=async()=>{await selectMap(row.name);fitSelection();};areaDetails.append(button);}details.append(areaDetails);}
+        const areaFocus=node('button','area-focus','Show this whole area');areaFocus.type='button';areaFocus.onclick=async()=>{const request=++S.navigationRequest;await finishStroke();if(request!==S.navigationRequest||S.busy||S.finishing)return;fitBounds(boundsOf(areaRows));};areaDetails.append(areaFocus);let role='';for(const row of areaRows){const roleLabel=row.role_label||area.maps.find(item=>item.name===row.name)?.role_label||'Locations';if(roleLabel!==role){role=roleLabel;areaDetails.append(node('div','role-label',roleLabel));}const button=node('button',`place-row${row.name===S.selected?' active':''}`);button.type='button';button.setAttribute('aria-label',`${mapTitle(row)} · ${roleLabel}`);button.title=mapTitle(row);button.innerHTML=`<span class="place-icon">${row.is_outdoor?'⌁':row.role==='homes'?'⌂':row.role==='gyms'?'◈':'▧'}</span><div><strong>${esc(mapTitle(row,false))}</strong><small>${row.width} × ${row.height} tiles${row.archived?' · archived':''}${row.overlaps?.length?' · overlapping layer':''}</small></div>${buffer(row.name)?.dirty?'<span class="dirty-dot"></span>':''}`;button.onclick=()=>navigateTo(row.name).catch(err=>toast(err.message,true));areaDetails.append(button);}details.append(areaDetails);}
       if(!categoryRows.length)details.append(node('p','empty','No matching maps in this category.'));frag.append(details);
     }
     $('#place-list').replaceChildren(frag);
   }
-  async function setCategory(category){if(!S.ready)return;if(!await changeView('world',S.selected,{fit:false}))return;S.category=category;$('#category-filter').value=category;const selected=map();if(selected&&!included(selected)){const next=S.maps.find(included);if(next)await selectMap(next.name);}renderPlaces();fitCategory();render();}
+  async function setCategory(category){if(!S.ready)return;const request=++S.navigationRequest;await finishStroke();if(request!==S.navigationRequest||S.busy||S.finishing)return;S.category=category;$('#category-filter').value=category;renderPlaces();fitBounds(boundsOf(S.maps.filter(included)));render();}
   async function selectMap(name){
-    if(!map(name))return;if((!S.connected&&(S.catalog?.conflicts||[]).some(seam=>seam.a===name||seam.b===name))||(S.connected&&!S.viewByName.has(name))){if(!applyView('connected',name,{fit:false}))return;}const request=++S.selectionRequest;S.selected=name;S.event=null;window.WorldTools?.selection(name);const row=map(name),area=S.areaByMap.get(name);if(S.ready||new URLSearchParams(location.search).get('map')){S.openCategories.add(categoryOf(row));if(area)S.openAreas.add(area.id);}$('#selected-name').textContent=mapTitle(row);$('#selected-detail').textContent=`${row.role_label||'Map'} · ${row.width} × ${row.height} tiles · loading editable tiles…`;$('#context-name').textContent=mapTitle(row);$('#map-context').hidden=false;$('#selected-links').hidden=false;$('#area-link').href=`/areas?map=${encodeURIComponent(name)}`;$('#connection-link').href=`/connections?map=${encodeURIComponent(name)}`;$('#story-link').href=`/campaign?map=${encodeURIComponent(name)}`;renderPlaces();render();
-    try{const b=await ensureBuffer(name);if(request!==S.selectionRequest)return;if(!b.valid.has(S.tile))S.tile=[...b.valid][0]||0;if(!b.raster)rasterize(b);$('#selected-detail').textContent=`${row.role_label||'Map'} · ${row.width} × ${row.height} tiles${row.is_outdoor===false?' · Interior / separate layer, editable on this same canvas':''}${row.overlaps?.length?' · overlaps '+row.overlaps.map(nice).join(', ')+'; choose the desired map in the sidebar':''}`;renderPalette();renderTileSelection();renderEvents();$('#set-eraser').disabled=false;scheduleNearbyBuffers();pruneRasters();status();render();}
-    catch(err){error(err.message);toast(err.message,true);}
+    if(!map(name))return false;S.navigationRequest++;const request=++S.selectionRequest;S.selected=name;S.event=null;window.WorldTools?.selection(name);const row=map(name),area=S.areaByMap.get(name);if(S.ready||new URLSearchParams(location.search).get('map')){S.openCategories.add(categoryOf(row));if(area)S.openAreas.add(area.id);}$('#selected-name').textContent=mapTitle(row);$('#selected-detail').textContent=`${row.role_label||'Map'} · ${row.width} × ${row.height} tiles · loading editable tiles…`;$('#context-name').textContent=mapTitle(row);$('#map-context').hidden=false;$('#selected-links').hidden=false;$('#area-link').href=`/areas?map=${encodeURIComponent(name)}`;$('#connection-link').href=`/connections?map=${encodeURIComponent(name)}`;$('#story-link').href=`/campaign?map=${encodeURIComponent(name)}`;updateMapConnections();renderPlaces();render();
+    try{const b=await ensureBuffer(name);if(request!==S.selectionRequest)return false;if(!b.valid.has(S.tile))S.tile=[...b.valid][0]||0;if(!b.raster)rasterize(b);$('#selected-detail').textContent=`${row.role_label||'Map'} · ${row.width} × ${row.height} tiles${row.is_outdoor===false?' · Interior / separate layer, editable on this same canvas':''}${row.overlaps?.length?' · overlaps '+row.overlaps.map(nice).join(', ')+'; choose the desired map in the sidebar':''}`;renderPalette();renderTileSelection();renderEvents();$('#set-eraser').disabled=false;scheduleNearbyBuffers();pruneRasters();status();render();return true;}
+    catch(err){if(request===S.selectionRequest){error(err.message);toast(err.message,true);}return false;}
   }
   function pruneRasters(){const rasters=[...S.buffers].filter(([name,b])=>b.raster&&name!==S.selected&&!b.dirty&&!visible(map(name)));if(rasters.length>8)for(const[name,b]of rasters.slice(0,rasters.length-8))b.raster=null;}
   function setPanel(panel){S.panel=panel;$$('[data-panel]').forEach(button=>{button.classList.toggle('active',button.dataset.panel===panel);button.setAttribute('aria-selected',String(button.dataset.panel===panel));});['tiles','objects','events'].forEach(name=>$(`#panel-${name}`).hidden=name!==panel);}
@@ -260,7 +212,8 @@
   function chosenEvent(){return S.event?buffer(S.event.name)?.data.map[S.event.kind]?.[S.event.index]:null;}
   canvas.onpointerdown=async event=>{
     if(!S.ready||S.busy||S.finishing)return;const press=++S.press;S.pointerActive=event.pointerId;const p=world(event.clientX,event.clientY),row=hit(p),initialBrush=brushState();event.preventDefault();canvas.setPointerCapture(event.pointerId);
-    if(event.button===1||S.space||!row&&event.button===0){S.drag={pan:true,clientX:event.clientX,clientY:event.clientY,camera:{...S.camera}};viewport.classList.add('panning');return;}
+    if(event.button===0&&!S.space&&S.tool==='select'&&S.mode!=='events'){const destination=transitionAt(event.clientX,event.clientY);if(destination){await navigateTo(destination.name);return;}}
+    if(event.button===1||S.space||!row&&event.button===0){S.navigationRequest++;S.drag={pan:true,clientX:event.clientX,clientY:event.clientY,camera:{...S.camera}};viewport.classList.add('panning');return;}
     if(event.button===2||S.tool==='picker'&&S.mode!=='events'){await pickAt(p);return;}if(event.button!==0||!row)return;
     if(S.tool==='select'&&S.mode!=='events'){await selectMap(row.name);return;}
     if(!buffer(row.name)||S.selected!==row.name){const previous=S.selected;await selectMap(row.name);if(!buffer(row.name))return;if(!buffer(previous)||S.tool==='select'&&S.mode!=='events')return;if(S.mode!=='events'&&!compatible(buffer(row.name),initialBrush)){toast('This place uses different landscape artwork. Choose a tile from its palette to paint here.');return;}}
@@ -295,7 +248,7 @@
     try{const response=await api('/api/worldmap/save',{maps:dirty.map(b=>({name:b.data.name,revision:b.data.revision,...snapshot(b),confirm_shared:confirmed}))});const freshRecords=response.saved||[];for(const data of freshRecords){const b=buffer(data.name);if(!b)continue;eventKinds.forEach(kind=>data.map[kind]||=[]);b.data=data;b.saved=fingerprint(b);b.dirty=false;rasterize(b);}if(freshRecords.length!==dirty.length){for(const b of dirty)if(b.dirty){const data=await api(`/api/world/map?name=${encodeURIComponent(b.data.name)}`);eventKinds.forEach(kind=>data.map[kind]||=[]);b.data=data;b.saved=fingerprint(b);b.dirty=false;rasterize(b);}}resetNativePreviews();S.history=[];S.future=[];renderPlaces();renderEvents();render();scheduleNearbyBuffers();toast(`Saved ${dirty.length} place${dirty.length===1?'':'s'} together with backups.`);}
     catch(err){error(err.message);toast(err.message,true);}finally{S.busy=false;status();}}
   async function reloadWorld(preferred=S.selected,focus=false){
-    const priorView=S.view,priorAnchor=S.connected?.anchor,priorPosition=priorAnchor?map(priorAnchor):null;S.generation++;S.selectionRequest++;clearTimeout(S.viewportLoadTimer);S.previewInFlight.clear();S.previewFailed.clear();const[catalog,areas,allMaps]=await Promise.all([api('/api/worldmap'),api('/api/areas'),api('/api/world/maps')]);S.catalog=catalog;S.maps=catalog.maps;S.byName=new Map(S.maps.map(row=>[row.name,row]));S.connected=null;S.viewByName.clear();S.view='world';if(priorView==='connected')applyView('connected',S.byName.has(priorAnchor)?priorAnchor:preferred,{position:priorPosition,fit:false});S.areas=areas.areas;S.areaByMap.clear();S.areas.forEach(area=>area.maps.forEach(row=>S.areaByMap.set(row.name,area)));S.buffers.clear();S.loads.clear();S.atlases.clear();S.sprites.clear();S.erasers.clear();S.previews.clear();resetNativePreviews();S.history=[];S.future=[];S.event=null;S.drag=null;S.preloadDone=0;S.previewDone=0;$('#map-ids').replaceChildren(...allMaps.maps.map(row=>{const option=node('option');option.value=row.id;option.label=nice(row.name);return option;}));const next=map(preferred)?preferred:map('LittlerootTown')?'LittlerootTown':S.maps[0]?.name;if(next){if(!included(map(next))){S.category='all';$('#category-filter').value='all';}await selectMap(next);}if(focus)fitSelection();status();render();preload();
+    S.generation++;S.selectionRequest++;S.navigationRequest++;clearTimeout(S.viewportLoadTimer);S.previewInFlight.clear();S.previewFailed.clear();const[catalog,areas,allMaps]=await Promise.all([api('/api/worldmap'),api('/api/areas'),api('/api/world/maps')]);S.catalog=catalog;S.maps=catalog.maps;S.byName=new Map(S.maps.map(row=>[row.name,row]));S.areas=areas.areas;S.areaByMap.clear();S.areas.forEach(area=>area.maps.forEach(row=>S.areaByMap.set(row.name,area)));S.buffers.clear();S.loads.clear();S.atlases.clear();S.sprites.clear();S.erasers.clear();S.previews.clear();resetNativePreviews();S.history=[];S.future=[];S.event=null;S.drag=null;S.preloadDone=0;S.previewDone=0;$('#map-ids').replaceChildren(...allMaps.maps.map(row=>{const option=node('option');option.value=row.id;option.label=nice(row.name);return option;}));const next=map(preferred)?preferred:map('LittlerootTown')?'LittlerootTown':S.maps[0]?.name;if(next){if(!included(map(next))){S.category='all';$('#category-filter').value='all';}await selectMap(next);}if(focus)fitSelection();status();render();preload();
   }
   async function requireSavedWorld(){
     if(!dirtyBuffers().length)return true;
@@ -322,13 +275,13 @@
     catch(err){error(err.message);toast(err.message,true);}finally{S.busy=false;status();}
   }
   $('#save-world').onclick=saveWorld;$('#undo').onclick=()=>undo();$('#redo').onclick=()=>undo(true);$('#fit-world').onclick=fitWorld;$('#fit-selection').onclick=fitSelection;$('#zoom-value').onclick=fitWorld;$('#zoom-in').onclick=()=>zoom(1.3);$('#zoom-out').onclick=()=>zoom(1/1.3);$('#place-search').oninput=renderPlaces;
-  $('#layout-joins').onclick=()=>{const seams=viewConflicts();if(seams.length===1)focusJoin(seams[0]).catch(err=>toast(err.message,true));else showLayoutJoins();};$('#connected-view').onclick=()=>changeView('connected',S.selected);$('#world-overview').onclick=fitWorld;
+
   $('#saved-history').onclick=savedHistory;$('#new-place').onclick=newPlace;$('#category-filter').onchange=event=>setCategory(event.target.value);$('#fit-category').onclick=fitCategory;
   $$('[data-tool]').forEach(button=>button.onclick=()=>setTool(button.dataset.tool));$$('[data-mode]').forEach(button=>button.onclick=()=>setMode(button.dataset.mode));$$('[data-panel]').forEach(button=>button.onclick=()=>setPanel(button.dataset.panel));['show-labels','show-bounds','show-grid','show-events'].forEach(id=>$(`#${id}`).onchange=render);
   $('#tile-bank').onchange=renderPalette;$('#tile-search').oninput=renderPalette;$('#set-eraser').onclick=()=>{if(buffer()){S.erasers.set(S.selected,S.tile);renderTileSelection();toast(`Eraser now uses tile ${S.tile} in ${nice(S.selected)}.`);}};$('#object-search').oninput=renderObjects;
   $('#place-event').onclick=()=>{S.place=true;syncPlace();if(S.scale<3)fitSelection();};$('#select-event').onclick=()=>{S.place=false;syncPlace();};
-  $('#minimap').onclick=event=>{if(!S.minimap)return;const r=event.currentTarget.getBoundingClientRect(),x=(event.clientX-r.left)/r.width*event.currentTarget.width,y=(event.clientY-r.top)/r.height*event.currentTarget.height;S.camera.x=(x-S.minimap.ox)/S.minimap.s;S.camera.y=(y-S.minimap.oy)/S.minimap.s;render();scheduleNearbyBuffers();};
-  $('#help').onclick=()=>dialog('Build directly on the whole world',`<ul class="tips"><li>Every place on this canvas uses its actual terrain. <strong>Click a place, choose a tile, and paint here.</strong> You stay on the world canvas.</li><li>Scroll to zoom. Hold Space and drag, middle-drag, or drag empty space to explore. The small navigator moves your view around the world.</li><li>Paint, erase, fill, and rectangles edit the source map tiles. A paint stroke continues into neighboring maps when they use compatible artwork.</li><li>People &amp; events lets you add, select, move, duplicate, and delete people, objects, doorways, and story triggers on this same canvas.</li><li>Movement edits collision and elevation. Landscape tile behavior also affects where the player can walk.</li><li>Save world writes every edited place together with backups. Ctrl Z and Ctrl Shift Z undo and redo pending edits.</li><li>Every home, building floor, cave, underwater area, and special map is here. Open the four area categories or search by area, room, or floor. Interiors and detached areas are grouped around the connected world surface; this arrangement does not create walking connections.</li><li>Connected view shows a place and its immediate neighbors at the original game offsets, with complete rectangular tile grids. World overview returns to all places, retaining pending edits. Some original walking connections form inconsistent loops. ${S.catalog?.conflicts?.length||0} seams and ${S.catalog?.overlaps?.length||0} overlap areas are flagged by the source layout. At an overlap, choose the desired place in the sidebar; that place is displayed and edited on top.</li><li>The PokéNav region picture is a separate game screen. This canvas edits the playable world’s actual terrain.</li><li>Saving edits source files. Building and playtesting a playable ROM still uses the separate build setup.</li></ul>${(S.catalog?.warnings||[]).map(w=>`<p>${esc(w)}</p>`).join('')}`,'Got it',true);
+  $('#minimap').onclick=event=>{if(!S.minimap)return;S.navigationRequest++;const r=event.currentTarget.getBoundingClientRect(),x=(event.clientX-r.left)/r.width*event.currentTarget.width,y=(event.clientY-r.top)/r.height*event.currentTarget.height;S.camera.x=(x-S.minimap.ox)/S.minimap.s;S.camera.y=(y-S.minimap.oy)/S.minimap.s;render();scheduleNearbyBuffers();};
+  $('#help').onclick=()=>dialog('Build directly on the whole world',`<ul class="tips"><li>Every place on this canvas uses its actual terrain. <strong>Click a place, choose a tile, and paint here.</strong> You stay on the world canvas.</li><li>Scroll to zoom. Hold Space and drag, middle-drag, or drag empty space to explore. The small navigator moves your view around the world.</li><li>Paint, erase, fill, and rectangles edit the source map tiles. A paint stroke continues into neighboring maps when they use compatible artwork.</li><li>People &amp; events lets you add, select, move, duplicate, and delete people, objects, doorways, and story triggers on this same canvas.</li><li>Movement edits collision and elevation. Landscape tile behavior also affects where the player can walk.</li><li>Save world writes every edited place together with backups. Ctrl Z and Ctrl Shift Z undo and redo pending edits.</li><li>Every home, building floor, cave, underwater area, and special map is here. Open the four area categories or search by area, room, or floor. Interiors and detached areas are grouped around the connected world surface; this arrangement does not create walking connections.</li><li>Map connections above the canvas take you to a neighboring map without hiding any places or discarding pending edits. Numbered labels link separated sections; use Select and click a label to go to its destination. Area categories filter the place list and focus the camera; every map stays on the canvas.</li><li>The PokéNav region picture is a separate game screen. This canvas edits the playable world’s actual terrain.</li><li>Saving edits source files. Building and playtesting a playable ROM still uses the separate build setup.</li></ul>${(S.catalog?.warnings||[]).map(w=>`<p>${esc(w)}</p>`).join('')}`,'Got it',true);
   document.addEventListener('keydown',event=>{if($('#dialog').open)return;const typing=/INPUT|TEXTAREA|SELECT/.test(event.target.tagName)||event.target.isContentEditable;if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='s'){event.preventDefault();document.activeElement?.blur();saveWorld();return;}if(typing)return;if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='z'){event.preventDefault();undo(event.shiftKey);return;}if(event.code==='Space'){event.preventDefault();S.space=true;return;}if(event.key==='Escape'){S.place=false;S.event=null;syncPlace();renderEvents();render();return;}if(event.key==='Delete'&&S.event){event.preventDefault();deleteEvent();return;}const tool={v:'select',b:'brush',e:'erase',f:'fill',r:'rectangle',i:'picker'}[event.key.toLowerCase()];if(tool&&!event.ctrlKey&&!event.metaKey)setTool(tool);});
   document.addEventListener('keyup',event=>{if(event.code==='Space')S.space=false;});window.addEventListener('blur',()=>{S.space=false;finishStroke();});window.addEventListener('beforeunload',event=>{if(dirtyBuffers().length){event.preventDefault();event.returnValue='';}});
   document.addEventListener('click',async event=>{const link=event.target.closest('a[href]');if(!link||!dirtyBuffers().length||event.ctrlKey||event.metaKey||link.target==='_blank')return;if(link.origin===location.origin){event.preventDefault();if(await dialog('Leave unsaved world edits?','<p>Save world to keep your pending terrain and event edits. Leaving now discards those unsaved edits.</p>','Discard and leave')){S.buffers.forEach(b=>b.dirty=false);location.href=link.href;}}});
@@ -337,7 +290,7 @@
   window.WorldTools?.configure({
     getSelection:()=>S.selected,
     beforeOpen:async()=>{if(!S.ready||S.busy||S.finishing)return false;await finishStroke();return requireSavedWorld();},
-    onClose:async(preferred,details={})=>{if(S.busy||S.finishing||dirtyBuffers().length)return false;if(details.sourceChanged){S.busy=true;status();try{await reloadWorld(preferred||S.selected,!!preferred);}catch(err){error(err.message);toast(err.message,true);return false;}finally{S.busy=false;status();}}else if(preferred&&map(preferred)){await selectMap(preferred);fitSelection();}return true;}
+    onClose:async(preferred,details={})=>{if(S.busy||S.finishing||dirtyBuffers().length)return false;if(details.sourceChanged){S.busy=true;status();try{await reloadWorld(preferred||S.selected,!!preferred);}catch(err){error(err.message);toast(err.message,true);return false;}finally{S.busy=false;status();}}else if(preferred&&map(preferred)){await navigateTo(preferred);}return true;}
   });
   init();
 })();

@@ -5,7 +5,6 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const Views = require('../web/worldmap-views.js');
 const plain = value => JSON.parse(JSON.stringify(value));
 function freeze(value) {
   if (value && typeof value === 'object') {
@@ -21,8 +20,8 @@ assert.ok(boot.test(originalScript), 'Editor boot hook changed; update the test 
 const testScript = originalScript.replace(boot, `
   globalThis.editorTest = {S,canvas,snapshot,fingerprint,hit,local,screen,world,
     worldLine,paintWorld,finishStroke,undo,eventAt,addEvent,saveWorld,pickAt,
-    drawMap,drawWorld,fitSelection,boundsOf,map,viewMaps,applyView,changeView,
-    selectMap,fitWorld,pruneRasters,focusJoin};
+    drawMap,drawWorld,fitSelection,boundsOf,map,navigateTo,setCategory,updateMapConnections,
+    selectMap,fitWorld,pruneRasters};
 })();`);
 
 function mockContext() {
@@ -97,7 +96,6 @@ function environment() {
   };
   sandbox.window = sandbox;
   sandbox.parent = sandbox;
-  sandbox.WorldMapViews = Views;
   vm.createContext(sandbox);
   vm.runInContext(testScript, sandbox, {filename});
   const editor = sandbox.editorTest, {S} = editor;
@@ -105,15 +103,15 @@ function environment() {
     {name: 'Route103', id: 'MAP_ROUTE103', x: 120, y: 218, width: 80, height: 22,
       connections: [{map: 'MAP_OLDALE_TOWN', name: 'OldaleTown', direction: 'down', offset: 0},
         {map: 'MAP_ROUTE110', name: 'Route110', direction: 'right', offset: -60}]},
-    {name: 'Route110', id: 'MAP_ROUTE110', x: 200, y: 160, width: 40, height: 100,
+    {name: 'Route110', id: 'MAP_ROUTE110', x: 200, y: 158, width: 40, height: 100,
       connections: [{map: 'MAP_MAUVILLE_CITY', name: 'MauvilleCity', direction: 'up', offset: 0},
         {map: 'MAP_SLATEPORT_CITY', name: 'SlateportCity', direction: 'down', offset: 0},
         {map: 'MAP_ROUTE103', name: 'Route103', direction: 'left', offset: 60}]},
-    {name: 'OldaleTown', id: 'MAP_OLDALE_TOWN', x: 120, y: 240, width: 20, height: 20,
+    {name: 'OldaleTown', id: 'MAP_OLDALE_TOWN', x: 0, y: 240, width: 20, height: 20,
       connections: [{map: 'MAP_ROUTE103', name: 'Route103', direction: 'up', offset: 0}]},
-    {name: 'MauvilleCity', id: 'MAP_MAUVILLE_CITY', x: 200, y: 140, width: 40, height: 20,
+    {name: 'MauvilleCity', id: 'MAP_MAUVILLE_CITY', x: 200, y: 138, width: 40, height: 20,
       connections: [{map: 'MAP_ROUTE110', name: 'Route110', direction: 'down', offset: 0}]},
-    {name: 'SlateportCity', id: 'MAP_SLATEPORT_CITY', x: 200, y: 260, width: 40, height: 60,
+    {name: 'SlateportCity', id: 'MAP_SLATEPORT_CITY', x: 200, y: 258, width: 40, height: 60,
       connections: [{map: 'MAP_ROUTE110', name: 'Route110', direction: 'up', offset: 0}]}
   ];
   rows.forEach(row => Object.assign(row, {area_kind: 'route', role_label: 'Routes', component: 'Hoenn', overlaps: []}));
@@ -123,10 +121,10 @@ function environment() {
     area_kind: 'special', role_label: 'Rooms', connections: [], overlaps: [], component: 'Interior_' + i
   })));
   const catalog = freeze({maps: plain(catalogRows), bounds: {x: 120, y: 140, width: 480, height: 180},
-    conflicts: [], sections: [], groups: [], warnings: []});
+    conflicts: [], transitions: [], sections: [], groups: [], warnings: []});
   Object.assign(S, {ready: true, selected: 'Route103', maps: catalog.maps,
     byName: new Map(catalog.maps.map(row => [row.name, row])),
-    catalog, view: 'world', anchor: null,
+    catalog,
     camera: {x: 160, y: 230}, width: 800, height: 600, scale: 16, tile: 7,
     tool: 'brush', mode: 'terrain', token: 'isolated-test-token'});
   for (const row of rows) {
@@ -195,173 +193,117 @@ async function test(label, run) {
 }
 
 (async () => {
-  await test('connected view uses exact offsets and keeps all 518 catalog entries immutable', async env => {
-    const {editor, S, catalog} = env, before = plain(catalog);
-    assert.equal(editor.applyView('connected', 'Route103', {fit: false}), true);
-    assert.equal(S.connected.anchor, 'Route103');
-    assert.deepEqual(Array.from(editor.viewMaps(), row => row.name), ['Route103', 'OldaleTown', 'Route110']);
-    const route = editor.map('Route103'), east = editor.map('Route110'), town = editor.map('OldaleTown');
-    assert.deepEqual({x: east.x - route.x, y: east.y - route.y}, {x: 80, y: -60});
-    assert.deepEqual({x: town.x - route.x, y: town.y - route.y}, {x: 0, y: 22});
-    assert.deepEqual({width: route.width, height: route.height}, {width: 80, height: 22});
-    assert.equal(S.byName.get('Route110').y, 160, 'The raw overview origin stays unchanged');
-    assert.equal(east.y, 158, 'Only the active whole-map origin uses the local connection');
-    assert.equal(S.maps.length, 518);
-    assert.equal(editor.hit({x: 501, y: 201}), null, 'An inactive interior is not hit-testable');
-    assert.equal(editor.hit({x: 200, y: 224.5}).name, 'Route110');
-    pristine(env);
-    await editor.changeView('world', S.selected, {fit: false});
-    assert.equal(editor.viewMaps().length, 518);
-    assert.equal(editor.map('Route110').y, 160);
-    assert.deepEqual(plain(catalog), before);
+  await test('all 518 maps remain on one immutable canvas when changing selection and category', async env => {
+    const before = plain(env.catalog);
+    await env.editor.navigateTo('OldaleTown');
+    assert.equal(env.S.maps.length, 518);
+    assert.equal(env.S.selected, 'OldaleTown');
+    assert.equal(env.editor.hit({x: 201, y: 224.5}).name, 'Route110');
+    assert.equal(env.editor.hit({x: 501, y: 201}).name, 'Interior_0');
+    await env.editor.setCategory('route');
+    assert.equal(env.editor.hit({x: 501, y: 201}).name, 'Interior_0', 'Category navigation never hides other maps');
+    await env.editor.fitWorld();
+    assert.equal(env.S.maps.length, 518);
+    assert.deepEqual(plain(env.catalog), before);
+    assert.equal(env.editor.map('Route110'), env.S.byName.get('Route110'));
+    assert.doesNotMatch(fs.readFileSync(path.join(__dirname, '../web/worldmap.html'), 'utf8'), /id="connected-view"|worldmap-views/);
     pristine(env);
   });
 
-  await test('pending brush edits reuse the same buffers across views and undo exactly', async env => {
+  await test('pending edits survive map-link navigation and Undo restores source tiles', async env => {
     const originalBuffer = env.S.buffers.get('Route103');
     await env.editor.canvas.onpointerdown(eventAtLocal(env, 'Route103', 34.5, 6.5));
     env.editor.canvas.onpointermove(eventAtLocal(env, 'Route103', 37.5, 6.5));
     await env.editor.finishStroke();
     assert.deepEqual(changedCells(env, 'Route103'), ['34,6', '35,6', '36,6', '37,6']);
-    await env.editor.changeView('connected', 'Route103', {fit: false});
+    await env.editor.navigateTo('OldaleTown');
+    await env.editor.fitWorld();
     assert.equal(env.S.buffers.get('Route103'), originalBuffer);
     assert.equal(originalBuffer.dirty, true);
-    await env.editor.changeView('world', 'Route103', {fit: false});
-    assert.equal(env.S.buffers.get('Route103'), originalBuffer);
     unchangedMetadata(env);
     env.editor.undo();
     pristine(env);
-    await env.editor.changeView('connected', 'Route103', {fit: false});
     env.editor.undo(true);
     assert.deepEqual(changedCells(env, 'Route103'), ['34,6', '35,6', '36,6', '37,6']);
   });
 
-  await test('one brush stroke crosses Route103 to Route110 using original source cells', async env => {
-    env.editor.applyView('connected', 'Route103', {fit: false});
+  await test('a brush stroke crosses the joined Route103 and Route110 using original source cells', async env => {
     await env.editor.canvas.onpointerdown(eventAtLocal(env, 'Route103', 78.5, 6.5));
     env.editor.canvas.onpointermove(eventAtLocal(env, 'Route110', 1.5, 66.5));
     await env.editor.finishStroke();
     assert.deepEqual(changedCells(env, 'Route103'), ['78,6', '79,6']);
     assert.deepEqual(changedCells(env, 'Route110'), ['0,66', '1,66']);
     unchangedMetadata(env);
-    await env.editor.changeView('world', 'Route103', {fit: false});
     env.editor.undo();
     pristine(env);
   });
 
-  await test('rectangles stay on the complete source grid at a negative display origin', async env => {
-    env.editor.applyView('connected', 'Route103', {position: {x: -200, y: -80}, fit: false});
-    env.S.tool = 'rectangle';
-    await env.editor.canvas.onpointerdown(eventAtLocal(env, 'Route103', 27.4, 4.4));
-    env.editor.canvas.onpointermove(eventAtLocal(env, 'Route103', 42.4, 7.4));
+  await test('section gutters have no editable terrain', async env => {
+    const gap = {x: 75, y: 250};
+    assert.equal(env.editor.hit(gap), null);
+    await env.editor.canvas.onpointerdown(eventAtWorld(env, gap));
     await env.editor.finishStroke();
-    const expected = [];
-    for (let y = 4; y <= 7; y++) for (let x = 27; x <= 42; x++) expected.push(`${x},${y}`);
-    assert.deepEqual(changedCells(env, 'Route103'), expected);
-    unchangedMetadata(env);
-    env.editor.undo();
     pristine(env);
   });
 
-  await test('active rectangles finish before a view switch can change their origins', async env => {
-    env.editor.applyView('connected', 'Route103', {position: {x: -200, y: -80}, fit: false});
+  await test('rectangles finish on the source grid before following a map link', async env => {
     env.S.tool = 'rectangle';
     await env.editor.canvas.onpointerdown(eventAtLocal(env, 'Route103', 78.2, 20.2));
     env.editor.canvas.onpointermove(eventAtLocal(env, 'Route103', 84.8, 26.8));
-    assert.equal(env.editor.applyView('world'), false, 'Raw view changes are blocked during a gesture');
-    assert.equal(env.S.view, 'connected');
-    assert.equal(await env.editor.changeView('world', 'Route103', {fit: false}), true);
+    await env.editor.navigateTo('OldaleTown');
     assert.equal(env.S.drag, null);
+    assert.equal(env.S.selected, 'OldaleTown');
     assert.deepEqual(changedCells(env, 'Route103'), ['78,20', '79,20', '78,21', '79,21']);
     assert.deepEqual(changedCells(env, 'Route110'), []);
     env.editor.undo();
     pristine(env);
   });
 
-  await test('event drag uses source positions and remains undoable after changing view', async env => {
-    env.editor.applyView('connected', 'Route103', {position: {x: 17, y: -50}, fit: false});
-    env.S.mode = 'events';
-    env.S.tool = 'select';
+  await test('event drag retains source coordinates and is undoable after navigation', async env => {
+    env.S.mode = 'events'; env.S.tool = 'select';
     await env.editor.canvas.onpointerdown(eventAtLocal(env, 'Route103', 34.7, 6.8));
     assert.equal(env.S.drag.event, true);
     env.editor.canvas.onpointermove(eventAtLocal(env, 'Route103', 41.7, 12.8));
-    await env.editor.changeView('world', 'Route103', {fit: false});
+    await env.editor.navigateTo('OldaleTown');
     const event = env.S.buffers.get('Route103').data.map.object_events[0];
     assert.deepEqual(plain(event), {...env.original.get('Route103').map.object_events[0], x: 41, y: 12});
     assert.deepEqual(changedCells(env, 'Route103'), []);
-    env.editor.undo();
-    pristine(env);
+    env.editor.undo(); pristine(env);
     env.editor.undo(true);
     assert.equal(env.S.buffers.get('Route103').data.map.object_events[0].y, 12);
   });
 
-  await test('event placement on a moved neighboring map stores its original local coordinates', async env => {
-    env.editor.applyView('connected', 'Route103', {fit: false});
-    env.S.mode = 'events';
-    env.S.place = true;
+  await test('event placement on another map stores local coordinates', async env => {
+    env.S.mode = 'events'; env.S.place = true;
     await env.editor.canvas.onpointerdown(eventAtLocal(env, 'Route110', 8.5, 66.5));
     const event = env.S.buffers.get('Route110').data.map.object_events[0];
     assert.deepEqual({x: event.x, y: event.y}, {x: 8, y: 66});
-    env.editor.undo();
-    pristine(env);
+    env.editor.undo(); pristine(env);
   });
 
-  await test('reanchoring follows exact neighboring connections and retains buffer identities', async env => {
-    const buffers = new Map(env.S.buffers);
-    env.editor.applyView('connected', 'Route103', {fit: false});
-    await env.editor.selectMap('Route110');
-    const before = plain(env.editor.map('Route110'));
-    await env.editor.changeView('connected', 'Route110', {fit: false});
-    assert.equal(env.S.connected.anchor, 'Route110');
-    assert.deepEqual(Array.from(env.editor.viewMaps(), row => row.name), ['Route110', 'MauvilleCity', 'SlateportCity', 'Route103']);
-    assert.deepEqual({x: env.editor.map('Route110').x, y: env.editor.map('Route110').y}, {x: before.x, y: before.y});
-    assert.equal(env.editor.map('MauvilleCity').y, before.y - 20);
-    assert.equal(env.editor.map('SlateportCity').y, before.y + 100);
-    assert.equal(env.editor.map('Route103').y, before.y + 60);
-    env.editor.pruneRasters();
+  await test('map connections use same-canvas navigation and preserve complete catalog and buffers', async env => {
+    const before = plain(env.catalog), buffers = new Map(env.S.buffers);
+    env.editor.updateMapConnections();
+    const host = env.document.querySelector('#map-connections');
+    const button = host.children.find(child => child['aria-label'] === 'Go down to Oldale Town on this canvas');
+    assert.ok(button, 'An original source connection has a destination button');
+    await button.onclick();
+    assert.equal(env.S.selected, 'OldaleTown');
+    assert.equal(env.S.maps.length, 518);
+    assert.deepEqual(plain(env.catalog), before);
     for (const [name, buffer] of buffers) assert.equal(env.S.buffers.get(name), buffer);
     pristine(env);
   });
 
-  await test('selection outside the active neighborhood loads another neighborhood without losing edits', async env => {
-    env.editor.applyView('connected', 'Route103', {fit: false});
-    await env.editor.canvas.onpointerdown(eventAtLocal(env, 'Route103', 34.5, 6.5));
-    await env.editor.finishStroke();
-    await env.editor.selectMap('MauvilleCity');
-    assert.equal(env.S.connected.anchor, 'MauvilleCity');
-    assert.equal(env.S.selected, 'MauvilleCity');
-    assert.deepEqual(Array.from(env.editor.viewMaps(), row => row.name), ['MauvilleCity', 'Route110']);
-    assert.deepEqual(changedCells(env, 'Route103'), ['34,6']);
-    env.editor.undo();
-    pristine(env);
-    await env.editor.fitWorld();
-    assert.equal(env.editor.viewMaps().length, 518);
-  });
-
-  await test('selection stays visible when reanchoring is refused while a stroke finishes', async env => {
-    env.editor.applyView('connected', 'Route103', {fit: false});
+  await test('navigation is refused while pending edits are still finishing', async env => {
     env.S.finishing = true;
-    await env.editor.selectMap('MauvilleCity');
+    assert.equal(await env.editor.navigateTo('MauvilleCity'), false);
     assert.equal(env.S.selected, 'Route103');
-    assert.equal(env.S.connected.anchor, 'Route103');
-    assert.equal(env.S.viewByName.has(env.S.selected), true);
-    assert.equal(await env.editor.changeView('world', 'Route103', {fit: false}), false);
-    assert.equal(env.S.view, 'connected');
     env.S.finishing = false;
     pristine(env);
   });
 
-  await test('an inactive old selection cannot paint an invisible overview rectangle', async env => {
-    env.editor.applyView('connected', 'MauvilleCity', {fit: false});
-    assert.equal(env.S.selected, 'Route103');
-    assert.equal(env.S.viewByName.has('Route103'), false);
-    assert.equal(env.editor.map('Route103').y, 218, 'Fallback metadata remains available to cached buffers');
-    assert.equal(env.editor.hit({x: 154.5, y: 224.5}), null, 'Hit testing must use only visible maps');
-    pristine(env);
-  });
-
-  await test('drawing uses one complete rectangle per map with no transformed or cropped image', async env => {
-    env.editor.applyView('connected', 'Route103', {fit: false});
+  await test('drawing uses one full rectangle without transformed or cropped terrain', async env => {
     const row = env.editor.map('Route103'), image = {width: 256, height: 70.4};
     env.S.previews.set(row.name, image);
     env.editor.drawMap(row);
@@ -369,20 +311,18 @@ async function test(label, run) {
     const draws = calls.filter(call => call.op === 'drawImage');
     assert.equal(draws.length, 1);
     assert.equal(draws[0].args[0], image);
-    assert.equal(draws[0].args.length, 5, 'Source images are not cropped into partial segments');
+    assert.equal(draws[0].args.length, 5);
     assert.deepEqual(draws[0].args.slice(-2), [80 * 16, 22 * 16]);
     assert.equal(calls.filter(call => call.op === 'transform').length, 0);
     pristine(env);
   });
 
-  await test('save includes inactive pending buffers and excludes every display-view field', async env => {
+  await test('saving includes edited maps outside the camera and excludes section layout coordinates', async env => {
     const before = plain(env.catalog);
-    env.editor.applyView('connected', 'Route103', {fit: false});
     await env.editor.canvas.onpointerdown(eventAtLocal(env, 'Route103', 78.5, 6.5));
     env.editor.canvas.onpointermove(eventAtLocal(env, 'Route110', 1.5, 66.5));
     await env.editor.finishStroke();
-    await env.editor.selectMap('MauvilleCity');
-    assert.equal(env.S.viewByName.has('Route103'), false);
+    await env.editor.navigateTo('OldaleTown');
     await env.editor.saveWorld();
     assert.equal(env.requests.length, 1);
     const request = env.requests[0];
@@ -393,69 +333,40 @@ async function test(label, run) {
       const source = env.original.get(edit.name);
       for (const key of ['width', 'height', 'layout', 'map', 'border']) assert.deepEqual(edit[key], source[key]);
       assert.equal(edit.revision, 'original-revision');
-      assert.ok(!JSON.stringify(edit).includes('projection'));
     }
     assert.equal(env.S.buffers.get('Route103').dirty, false);
     assert.deepEqual(plain(env.catalog), before);
     assert.equal(env.S.buffers.get('Route103').data.height, 22);
-    await env.editor.changeView('world', 'MauvilleCity', {fit: false});
-    assert.equal(env.editor.viewMaps().length, 518);
   });
 
-  await test('a slow join focus cannot override a newer map selection', async env => {
+  await test('slow destination artwork cannot override a newer map selection', async env => {
     const slow = env.deferBuffer('Route103');
-    let settled = false;
-    const focusing = env.editor.focusJoin({a: 'Route103', b: 'Route110', direction: 'right', offset: -60})
-      .finally(() => { settled = true; });
+    const navigating = env.editor.navigateTo('Route103');
     await slow.started;
-    assert.equal(settled, false, 'The old join focus must actually be awaiting its map request');
-    const oldRequest = env.S.selectionRequest;
-    await env.editor.selectMap('MauvilleCity');
-    env.editor.fitSelection();
-    assert.ok(env.S.selectionRequest > oldRequest, 'A newer selection was made while the first map loaded');
-    const newer = {selected: env.S.selected, view: env.S.view, revision: env.S.viewRevision,
-      camera: plain(env.S.camera), scale: env.S.scale, heading: env.document.querySelector('#selected-name').textContent};
-    slow.resolve();
-    await focusing;
-    assert.equal(settled, true);
+    await env.editor.navigateTo('MauvilleCity');
+    const newer = {camera: plain(env.S.camera), scale: env.S.scale,
+      heading: env.document.querySelector('#selected-name').textContent};
+    slow.resolve(); await navigating;
     assert.equal(env.S.selected, 'MauvilleCity');
-    assert.equal(env.S.selected, newer.selected);
-    assert.equal(env.S.view, newer.view);
-    assert.equal(env.S.viewRevision, newer.revision, 'Stale completion must not apply another display view');
-    assert.equal(env.S.connected, null);
     assert.deepEqual(plain(env.S.camera), newer.camera);
     assert.equal(env.S.scale, newer.scale);
     assert.equal(env.document.querySelector('#selected-name').textContent, newer.heading);
-    assert.equal(env.editor.viewMaps().length, 518);
     pristine(env);
   });
 
-  await test('a slow join focus cannot reopen connected view after a newer World overview action', async env => {
-    env.editor.applyView('connected', 'Route103', {fit: false});
+  await test('slow destination artwork cannot undo See everything', async env => {
     const slow = env.deferBuffer('Route103');
-    let settled = false;
-    const focusing = env.editor.focusJoin({a: 'Route103', b: 'Route110', direction: 'right', offset: -60})
-      .finally(() => { settled = true; });
+    const navigating = env.editor.navigateTo('Route103');
     await slow.started;
-    assert.equal(settled, false);
-    const oldRequest = env.S.selectionRequest, oldRevision = env.S.viewRevision;
     await env.editor.fitWorld();
-    assert.equal(env.S.selectionRequest, oldRequest, 'This race changes only the view, not the selected map');
-    assert.ok(env.S.viewRevision > oldRevision, 'World overview superseded the pending join focus');
-    const newer = {camera: plain(env.S.camera), scale: env.S.scale, revision: env.S.viewRevision};
-    slow.resolve();
-    await focusing;
-    assert.equal(settled, true);
-    assert.equal(env.S.view, 'world');
-    assert.equal(env.S.connected, null);
-    assert.equal(env.S.viewByName.size, 0);
-    assert.equal(env.S.viewRevision, newer.revision);
+    const newer = {camera: plain(env.S.camera), scale: env.S.scale};
+    slow.resolve(); await navigating;
     assert.deepEqual(plain(env.S.camera), newer.camera);
     assert.equal(env.S.scale, newer.scale);
-    assert.equal(env.editor.viewMaps().length, 518);
+    assert.equal(env.S.maps.length, 518);
     pristine(env);
   });
 
-  assert.equal(fs.readFileSync(filename, 'utf8'), originalScript, 'Test must not edit the application script');
+  assert.equal(fs.readFileSync(filename, 'utf8'), originalScript, 'Tests must not edit application code');
   console.log(`World map editing passed: ${tests} actual-handler regression tests; all data stayed in isolated VM memory.`);
 })().catch(error => {console.error(error); process.exitCode = 1;});

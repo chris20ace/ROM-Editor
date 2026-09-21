@@ -42,6 +42,80 @@ class WorldMapTests(unittest.TestCase):
     def rows(self, catalog=None):
         return {row['name']: row for row in (catalog or self.model.catalog())['maps']}
 
+    def assert_source_geometry(self, catalog, source=None):
+        """Every whole source map and every cardinal record stays accounted for."""
+        source = source or self.source
+        maps = {path.parent.name: json.loads(path.read_bytes())
+                for path in (source / 'data/maps').glob('*/map.json')}
+        layouts = {layout['id']: layout for layout in json.loads((source / 'data/layouts/layouts.json').read_bytes())['layouts']}
+        rows = self.rows(catalog)
+        self.assertEqual(len(catalog['maps']), len(maps))
+        self.assertEqual(set(rows), set(maps))
+        self.assertEqual(catalog['conflicts'], [])
+        self.assertEqual(catalog['overlaps'], [])
+        for collection in ('components', 'sections'):
+            members = [name for group in catalog[collection] for name in group['names']]
+            self.assertEqual(len(members), len(set(members)), collection)
+            self.assertEqual(set(members), set(maps), collection)
+        for name, row in rows.items():
+            layout = layouts[maps[name]['layout']]
+            self.assertEqual((row['width'], row['height']), (layout['width'], layout['height']), name)
+            self.assertEqual(row['overlaps'], [])
+            self.assertNotIn('projection', row)
+        for index, a in enumerate(catalog['maps']):
+            for b in catalog['maps'][index + 1:]:
+                width = min(a['x'] + a['width'], b['x'] + b['width']) - max(a['x'], b['x'])
+                height = min(a['y'] + a['height'], b['y'] + b['height']) - max(a['y'], b['y'])
+                self.assertTrue(width <= 0 or height <= 0, (a['name'], b['name']))
+
+        opposites = {'up': 'down', 'down': 'up', 'left': 'right', 'right': 'left'}
+        def edge_key(a, b, direction, offset):
+            return (a, b, direction, offset) if a <= b else (b, a, opposites[direction], -offset)
+
+        transitions = {edge_key(link['a'], link['b'], link['direction'], link['offset']): link
+                       for link in catalog['transitions']}
+        self.assertEqual(len(transitions), len(catalog['transitions']))
+        self.assertEqual(len({link['id'] for link in catalog['transitions']}), len(transitions))
+        expected_transitions = set()
+        ids = {data['id']: name for name, data in maps.items()}
+        for name, data in maps.items():
+            a = rows[name]
+            for connection in data.get('connections') or []:
+                direction, offset = connection['direction'], connection['offset']
+                if direction not in opposites or type(offset) is not int or connection['map'] not in ids:
+                    continue
+                b = rows[ids[connection['map']]]
+                key = edge_key(name, b['name'], direction, offset)
+                if a['component'] != b['component']:
+                    expected_transitions.add(key)
+                    continue
+                expected = {'up': (a['x'] + offset, a['y'] - b['height']),
+                            'down': (a['x'] + offset, a['y'] + a['height']),
+                            'left': (a['x'] - b['width'], a['y'] + offset),
+                            'right': (a['x'] + a['width'], a['y'] + offset)}[direction]
+                self.assertEqual((b['x'], b['y']), expected, key)
+        self.assertEqual(set(transitions), expected_transitions)
+        for link in transitions.values():
+            a, b = rows[link['a']], rows[link['b']]
+            direction, offset = link['direction'], link['offset']
+            self.assertEqual(link['from_component'], a['component'])
+            self.assertEqual(link['to_component'], b['component'])
+            self.assertNotEqual(a['component'], b['component'])
+            axis = 'height' if direction in {'left', 'right'} else 'width'
+            start, end = max(0, offset), min(a[axis], offset + b[axis])
+            self.assertEqual(link['span'], max(0, end - start))
+            middle = (start + end) / 2
+            source_point = {'left': (a['x'], a['y'] + middle),
+                            'right': (a['x'] + a['width'], a['y'] + middle),
+                            'up': (a['x'] + middle, a['y']),
+                            'down': (a['x'] + middle, a['y'] + a['height'])}[direction]
+            target_point = {'left': (b['x'] + b['width'], b['y'] + middle - offset),
+                            'right': (b['x'], b['y'] + middle - offset),
+                            'up': (b['x'] + middle - offset, b['y'] + b['height']),
+                            'down': (b['x'] + middle - offset, b['y'])}[direction]
+            self.assertEqual((link['source']['x'], link['source']['y']), source_point)
+            self.assertEqual((link['target']['x'], link['target']['y']), target_point)
+
     def test_cardinal_neighbors_use_exact_dimensions_and_offsets_without_gaps(self):
         self.add_map('North', 10, 8)
         self.add_map('South', 12, 9)
@@ -101,7 +175,7 @@ class WorldMapTests(unittest.TestCase):
         catalog = self.model.catalog()
         self.assertEqual(set(self.rows(catalog)), {'LittlerootTown', 'House', 'IslandCave', 'Underwater_Route', 'BirthIsland_Exterior', 'MyNewTown'})
         self.assertEqual(len(catalog['components']), 6)
-        self.assertEqual(catalog['components'][0]['label'], 'Hoenn')
+        self.assertEqual(catalog['components'][0]['source_component'], 'LittlerootTown')
         rows = self.rows(catalog)
         self.assertFalse(rows['House']['is_outdoor'])
         self.assertFalse(rows['Underwater_Route']['is_outdoor'])
@@ -136,30 +210,29 @@ class WorldMapTests(unittest.TestCase):
         self.assertEqual(len(catalog['components']), 1)
         self.assertFalse(self.rows(catalog)['Route104_Prototype']['archived'])
 
-    def test_inconsistent_cycle_is_reported_instead_of_silently_moving_maps(self):
+    def test_inconsistent_cycle_becomes_whole_sections_with_explicit_original_links(self):
         self.add_map('East', 20, 20)
         self.add_map('Southeast', 20, 20)
         self.links('LittlerootTown', [('East', 'right', 0), ('Southeast', 'down', 10)])
         self.links('East', [('Southeast', 'down', 0)])
+        before = {str(path): path.read_bytes() for path in self.source.rglob('*') if path.is_file()}
         first = self.model.catalog()
         second = self.model.catalog()
         self.assertEqual(first, second)
-        self.assertEqual(len(first['conflicts']), 1)
-        seam = first['conflicts'][0]
-        self.assertEqual((seam['a'], seam['b']), ('East', 'Southeast'))
-        self.assertEqual(seam['delta'], {'x': -10, 'y': 0})
-        self.assertTrue(any('seams disagree' in warning for warning in first['warnings']))
+        self.assertGreater(len(first['components']), 1)
+        self.assertTrue(first['transitions'])
+        self.assert_source_geometry(first)
+        self.assertEqual(before, {str(path): path.read_bytes() for path in self.source.rglob('*') if path.is_file()})
 
-    def test_overlap_reports_exact_rectangle_and_both_map_names_for_layer_selection(self):
+    def test_overlapping_neighbors_are_separated_without_concealing_source_rectangles(self):
         self.add_map('North', 20, 20)
         self.add_map('NorthOther', 20, 20)
         self.links('LittlerootTown', [('North', 'up', 0), ('NorthOther', 'up', 10)])
         catalog = self.model.catalog()
-        self.assertEqual(catalog['overlaps'], [{'a': 'North', 'b': 'NorthOther', 'x': 10, 'y': 0, 'width': 10, 'height': 20}])
         rows = self.rows(catalog)
-        self.assertEqual(rows['North']['overlaps'], ['NorthOther'])
-        self.assertEqual(rows['NorthOther']['overlaps'], ['North'])
-        self.assertTrue(any('bring its terrain forward' in warning for warning in catalog['warnings']))
+        self.assertNotEqual(rows['North']['component'], rows['NorthOther']['component'])
+        self.assertTrue(catalog['transitions'])
+        self.assert_source_geometry(catalog)
 
     def test_catalog_is_read_only_and_revision_changes_after_layout_or_map_changes(self):
         before = {str(p): p.read_bytes() for p in self.source.rglob('*') if p.is_file()}
@@ -175,20 +248,25 @@ class WorldMapTests(unittest.TestCase):
         self.add_map('NewOcean', 15, 15, 'MAP_TYPE_OCEAN_ROUTE')
         self.assertNotEqual(resized['revision'], self.model.catalog()['revision'])
 
-    def test_real_hoenn_geometry_exposes_source_seams_and_preserves_continent(self):
+    def test_real_hoenn_sections_preserve_every_map_and_route103_join(self):
         catalog = WorldMap(SOURCE).catalog()
         rows = self.rows(catalog)
         expected = {p.parent.name for p in (SOURCE / 'data/maps').glob('*/map.json')}
         self.assertEqual(set(rows), expected)
         self.assertEqual(len(catalog['maps']), len(expected))
-        self.assertEqual(catalog['components'][0]['id'], 'LittlerootTown')
-        self.assertIn('LittlerootTown', catalog['components'][0]['names'])
-        self.assertIn('EverGrandeCity', catalog['components'][0]['names'])
+        main = [section for section in catalog['sections'] if section['kind'] == 'main']
+        main_names = {name for section in main for name in section['names']}
+        self.assertGreater(len(main), 1)
+        self.assertIn('LittlerootTown', main_names)
+        self.assertIn('EverGrandeCity', main_names)
         self.assertEqual(rows['Route101']['y'] + rows['Route101']['height'], rows['LittlerootTown']['y'])
         self.assertEqual(rows['Route101']['x'], rows['LittlerootTown']['x'])
         self.assertEqual(catalog['overlaps'], [])
-        self.assertEqual(len(catalog['conflicts']), 1)
-        self.assertEqual({catalog['conflicts'][0]['a'], catalog['conflicts'][0]['b']}, {'Route103', 'Route110'})
+        self.assertEqual(catalog['conflicts'], [])
+        self.assertTrue(catalog['transitions'])
+        self.assertEqual(rows['Route103']['component'], rows['Route110']['component'])
+        self.assertEqual((rows['Route110']['x'], rows['Route110']['y']),
+                         (rows['Route103']['x'] + 80, rows['Route103']['y'] - 60))
         self.assertIn('LittlerootTown_BrendansHouse_1F', rows)
         self.assertIn('FarawayIsland_Interior', rows)
         self.assertTrue(rows['Route104_Prototype']['archived'])
@@ -215,7 +293,7 @@ class WorldMapTests(unittest.TestCase):
                         and connection['map'] in names and type(connection['offset']) is int]
             self.assertEqual(row['connections'], expected, name)
 
-    def test_real_town_coastlines_and_routes_use_source_offsets_and_keep_only_one_display_break(self):
+    def test_real_source_edges_are_exact_inside_sections_or_preserved_between_them(self):
         source_paths = [SOURCE / 'data/maps' / name / 'map.json' for name in
                         ('DewfordTown', 'Route107', 'FallarborTown', 'Route114', 'VerdanturfTown', 'Route116', 'Route103', 'Route110')]
         before = {path: path.read_bytes() for path in source_paths}
@@ -228,29 +306,11 @@ class WorldMapTests(unittest.TestCase):
             self.assertEqual(rows[right]['y'], rows[left]['y'])
         self.assertEqual(rows['VerdanturfTown']['y'], rows['Route116']['y'] + rows['Route116']['height'])
         self.assertEqual(rows['VerdanturfTown']['x'], rows['Route116']['x'] + 80)
-        # Every source connection remains independently checkable; the one
-        # incompatible cycle closure must stay visible in the catalog.
-        reported = {frozenset((row['a'], row['b'])) for row in catalog['conflicts']}
-        ids = {row['id']: row for row in rows.values()}
-        for name in catalog['components'][0]['names']:
-            data = json.loads((SOURCE / 'data/maps' / name / 'map.json').read_bytes())
-            a = rows[name]
-            for connection in data.get('connections') or []:
-                direction = connection['direction']
-                if direction not in {'up', 'down', 'left', 'right'}:
-                    continue
-                b = ids[connection['map']]
-                offset = connection['offset']
-                expected = {'up': (a['x'] + offset, a['y'] - b['height']),
-                            'down': (a['x'] + offset, a['y'] + a['height']),
-                            'left': (a['x'] - b['width'], a['y'] + offset),
-                            'right': (a['x'] + a['width'], a['y'] + offset)}[direction]
-                actual = b['x'], b['y']
-                self.assertEqual(actual != expected, frozenset((name, b['name'])) in reported)
-        self.assertEqual(len(reported), 1)
+        self.assert_source_geometry(catalog, SOURCE)
+        self.assertEqual(catalog, WorldMap(SOURCE).catalog())
         self.assertEqual(before, {path: path.read_bytes() for path in source_paths})
 
-    def test_inconsistent_cycle_prefers_route_display_break_and_keeps_bridge_attached(self):
+    def test_inconsistent_cycle_preserves_bridge_and_complete_leaf_map(self):
         self.add_map('A', 20, 20)
         self.add_map('B', 20, 20)
         self.add_map('CTown', 20, 20, 'MAP_TYPE_TOWN')
@@ -260,14 +320,11 @@ class WorldMapTests(unittest.TestCase):
         self.links('B', [('CTown', 'down', 2), ('DetachedLeaf', 'up', 0)])
         catalog = self.model.catalog()
         rows = self.rows(catalog)
-        self.assertEqual(len(catalog['conflicts']), 1)
-        self.assertEqual({catalog['conflicts'][0]['a'], catalog['conflicts'][0]['b']}, {'A', 'B'})
-        self.assertEqual(rows['CTown']['x'], rows['A']['x'] + 20)
-        self.assertEqual(rows['CTown']['x'], rows['B']['x'] + 2)
-        self.assertEqual(rows['CTown']['y'], rows['B']['y'] + 20)
+        self.assertGreater(len(catalog['components']), 1)
+        self.assert_source_geometry(catalog)
+        self.assertEqual(rows['DetachedLeaf']['component'], rows['B']['component'])
         self.assertEqual(rows['DetachedLeaf']['x'], rows['B']['x'])
         self.assertEqual(rows['DetachedLeaf']['y'] + 8, rows['B']['y'])
-        self.assertEqual(len(catalog['components']), 1)
         self.assertEqual(catalog, self.model.catalog())
 
     def test_area_clusters_keep_homes_and_floors_with_owners_in_natural_order(self):
@@ -333,11 +390,16 @@ class WorldMapTests(unittest.TestCase):
     def test_real_shelves_and_detached_components_do_not_overlap_and_fit_landscape(self):
         catalog = WorldMap(SOURCE).catalog()
         self.assertGreater(catalog['bounds']['width'], catalog['bounds']['height'])
-        self.assertEqual(catalog['initial_bounds'], {'x': 0, 'y': 0, 'width': 800, 'height': 383})
         sections = {section['id']: section for section in catalog['sections']}
-        self.assertEqual(set(sections), {'main', 'town', 'route', 'dungeon', 'special'})
-        self.assertEqual(len(sections['main']['names']), 49)
-        self.assertGreater(sections['town']['bounds']['x'], sections['main']['bounds']['x'])
+        self.assertEqual({section['kind'] for section in sections.values()}, {'main', 'town', 'route', 'dungeon', 'special'})
+        main_parts = [section for section in sections.values() if section['kind'] == 'main']
+        self.assertGreater(len(main_parts), 1)
+        self.assertEqual(sum(len(section['names']) for section in main_parts), 49)
+        left, top = min(part['bounds']['x'] for part in main_parts), min(part['bounds']['y'] for part in main_parts)
+        right = max(part['bounds']['x'] + part['bounds']['width'] for part in main_parts)
+        bottom = max(part['bounds']['y'] + part['bounds']['height'] for part in main_parts)
+        self.assertEqual(catalog['initial_bounds'], {'x': left, 'y': top, 'width': right - left, 'height': bottom - top})
+        self.assertGreater(sections['town']['bounds']['x'], right)
         self.assertEqual(sections['town']['bounds']['y'], 0)
         for collection in (catalog['components'], catalog['sections'], catalog['groups']):
             for index, left in enumerate(collection):

@@ -1,6 +1,6 @@
 # World canvas alignment investigation
 
-The displayed Route 103 / Route 110 tear has two distinct causes: an incompatible loop in the original map coordinates, and a canvas placement rule that chooses to expose that loop on a walkable path. The terrain import has not lost two rows. Warping the terrain was not a valid correction and has been reverted.
+The earlier Route 103 / Route 110 tear had two causes: an incompatible loop in the original map coordinates, and a canvas placement rule that exposed that loop on a walkable path. The terrain import has not lost two rows. The editor now arranges complete maps in separate sections on one canvas, retaining the original links between sections.
 
 ## Evidence from the original ROM
 
@@ -46,11 +46,11 @@ The two paths require Route 110 to occupy positions two tiles apart. A single ri
 
 `SetPositionFromConnection` and `CameraMove` (fieldmap.c 578–630) change map-local coordinates using the full dimensions and stored offsets. There is no two-row trim or overlap correction. The workbench's `_delta` formulas match this engine behavior, and `world.py` renders every source terrain row.
 
-## The mistake in the canvas
+## The earlier placement mistake
 
-`worldmap.py` scores candidate placements by `(number of conflicting joins, joins involving towns/cities, overlapping rectangle area, displacement)` (lines 91–111). It temporarily omits connection constraints while positioning maps, then reports the remaining disagreement.
+The earlier `worldmap.py` placement rule scored candidates by `(number of conflicting joins, joins involving towns/cities, overlapping rectangle area, displacement)`. It temporarily omitted connection constraints while positioning maps, then reported the remaining disagreement.
 
-That rule favors town boundaries and avoids rectangle overlaps without considering whether a connection is traversable. It selected Route 103 / Route 110 for the remaining break. This made a playable path look damaged. Earlier changes moved the visible discrepancy between locations; they did not resolve the original coordinate contradiction.
+That rule favored town boundaries and avoided rectangle overlaps without considering whether a connection was traversable. It selected Route 103 / Route 110 for the remaining break. This made a playable path look damaged. Earlier changes moved the visible discrepancy between locations; they did not resolve the original coordinate contradiction.
 
 The Route 116 / Verdanturf boundary is blocked across its full 20-tile width. Route 103 / Route 110 has matching passable cells along the path. That distinction explains why the selected break is particularly unsuitable for an editor.
 
@@ -68,8 +68,22 @@ Primary references:
 - [Ruby layouts](https://github.com/pret/pokeruby/blob/master/data/layouts/layouts.json)
 - [Ruby Route 103 connections](https://github.com/pret/pokeruby/blob/master/data/maps/Route103/map.json)
 
-This investigation leaves map geometry, connections, terrain, sprites, and the ROM unchanged. The rejected display projection remains removed. A future implementation must distinguish map-local connections from a world overview and must not silently stretch, trim, overlap, or relocate terrain to claim a seamless original world.
+This investigation leaves map geometry, connections, terrain, sprites, and the ROM unchanged. The rejected display projection remains removed.
 
-## Editor correction after the audit
+## What the source groups mean
 
-The canvas now offers an explicit **Connected view** using a selected map and its immediate neighbors at the original connection offsets. Route 103 / Route 110 can be edited in that aligned view with full rectangular grids and no terrain transformation or source change. Buffers and Undo history are shared with **World overview**, which still contains every map. The local editing fix does not claim the original global loop is geometrically consistent.
+`data/maps/map_groups.json` defines the map lookup groups used by `Overworld_GetMapHeaderByGroupAndId` (`src/overworld.c`, lines 579–581). For example, `gMapGroup_TownsAndRoutes` contains the surface towns and routes together with underwater maps, while `gMapGroup_Dungeons` contains unrelated caves. These groups identify maps in the ROM; they do not declare rectangular world regions that can be stitched together.
+
+The `region_map_section` fields and `src/data/region_map/region_map_sections.json` describe names and locations on the PokéNav/Fly picture. Their small illustration-grid coordinates are separate from the playable maps' tile coordinates. They are useful labels, but do not supply missing global terrain positions.
+
+`fieldmap.c` reads a map's dimensions and its local connection records to compose the current view. It does not define the editor's display sections.
+
+## Current single-canvas arrangement
+
+Every source map appears once on the same canvas, with its entire rectangular tile grid. The editor groups maps into sections whose internal walking connections can all use their source offsets without overlapping complete map rectangles. Section placement is an editor arrangement calculated from source dimensions and connections.
+
+Original connections that run between sections remain explicit links between their source and destination maps. A gap between sections is display spacing; it does not disconnect the game or change its travel offsets. Route 103 retains all 80 × 22 cells, its south connection to Oldale at offset 0, and its east connection to Route 110 at offset −60, wherever the section boundary falls.
+
+All sections, interiors and other detached areas stay on the same editable page. Selecting a map focuses its position instead of replacing the world with a neighborhood view. Terrain and event buffers and Undo history stay attached to the original map names and source coordinates.
+
+This arrangement preserves the original terrain and local joins without claiming that all 518 maps form one globally seamless surface. It does not stretch, shear, crop, duplicate or conceal source terrain to close the inconsistent loop, and it does not modify source files merely to arrange the canvas.

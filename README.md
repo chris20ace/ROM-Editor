@@ -43,8 +43,8 @@ Read **[CONNECTING_YOUR_WORLD.md](CONNECTING_YOUR_WORLD.md)** for the town/route
 
 ## What is ready
 
-- A world canvas containing all maps. Connected landscapes keep their walking geometry; interiors, cave floors and special locations are arranged in labeled area groups. Browse the four area categories, zoom into any map, paint terrain, place people, and save several edited maps together.
-- **Connected view** edits the selected place and its immediate neighbors on the same canvas at their original game offsets. The Route 103 / Route 110 join opens this view automatically when selected. Every map keeps its complete rectangular tile grid. **World overview** returns to all 518 maps while keeping pending edits and Undo history. Overview cycle markers open the actual editable join; the overview itself remains a diagram of a world whose original local connections do not all share one global grid.
+- A world canvas containing every source map once, including all 518 original maps. Complete rectangular maps form labeled sections, with original walking offsets preserved inside each section. Links between sections show where those original connections continue. Interiors, cave floors and special locations remain in area groups on the same canvas.
+- Browse the four area categories, zoom into any map, paint terrain, place people, and save several edited maps together. Selecting a place focuses it on this canvas and keeps pending edits and Undo history. The sections are an editor arrangement derived from source dimensions and connections; Emerald does not store one seamless global tile grid.
 - A 2D map canvas with the original tiles, a sprite catalog, paint/fill/rectangle/pick tools, zoom, undo/redo, map resizing and blank-map creation.
 - Add, move, edit and delete map events. Buildings and trees are assembled from terrain tiles; entrances use warp events.
 - A separate editor for region-map artwork and named locations. The region picture and the maps the player walks through are edited independently.
