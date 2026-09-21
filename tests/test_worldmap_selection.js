@@ -39,10 +39,10 @@ function environment(){
     fitSelection:()=>{S.scale=16;},status(){}};
   const sandbox={TileSelection,TileMove,Uint8Array,Uint32Array,Map,Set,console,document:{createElement:tag=>{assert.equal(tag,'canvas');return canvas();}}};
   vm.runInNewContext(script,sandbox,{filename:'worldmap-selection.js'});controller=sandbox.WorldTileEditing.create(dependencies);
-  async function down(x,y,pointerId=1){const press=++S.press;S.pointerActive=pointerId;const p={x,y};return controller.pointerDown({button:0,pointerId},p,hit(p),press);}
+  async function down(x,y,modifiers={},pointerId=1){const press=++S.press;S.pointerActive=pointerId;const p={x,y};return controller.pointerDown({button:0,pointerId,...modifiers},p,hit(p),press);}
   const move=(x,y)=>controller.pointerMove({x,y});
   async function up(){const drag=S.drag;S.drag=null;S.pointerActive=null;return controller.finish(drag);}
-  async function rectangle(x1,y1,x2,y2){await down(x1,y1);move(x2,y2);await up();}
+  async function rectangle(x1,y1,x2,y2,modifiers={}){await down(x1,y1,modifiers);move(x2,y2);await up();}
   function undo(){const before=commits.pop();assert.ok(before);for(const[name,value]of before)Object.assign(buffer(name).data,clone(value));}
   function defer(name,{unload=false}={}){let resolve;const promise=new Promise(r=>resolve=r);if(unload)buffers.delete(name);deferred.set(name,{promise});return ()=>{deferred.delete(name);if(!buffers.has(name))buffers.set(name,{data:clone(records.get(name)),raster:null});resolve(buffer(name));};}
   const pixel=(name,x,y)=>{const b=buffer(name).data,index=Math.floor(y/16)*b.width+Math.floor(x/16),p=(y%16)*16+x%16;return b.pixel_patches?.[index]?.[p]??(b.cells[index]&1023)*256+p;};
@@ -64,6 +64,95 @@ test('overlapping tile moves copy from the original selection, not partially era
   const e=environment(),before=e.snapshots();await e.rectangle(.1,.1,1.9,.1);
   await e.down(.2,.2);e.move(1.2,.2);await e.up();
   assert.equal(e.commits.length,1);assert.deepEqual(e.buffer().data.cells.slice(0,3),[before.A.cells[0]&0xfc00,before.A.cells[0],before.A.cells[1]]);
+  e.undo();assert.deepEqual(e.snapshots(),before);
+});
+
+test('Shift-selected disjoint tiles move together, preserve their gaps, and share one Undo',async()=>{
+  const e=environment(),before=e.snapshots();
+  await e.rectangle(.1,.1,.1,.1);await e.rectangle(2.1,.1,2.1,.1,{shiftKey:true});
+  assert.match(e.$('#tile-selection-hint').textContent,/^2 tiles selected/);assert.equal(e.commits.length,0);assert.deepEqual(e.snapshots(),before);
+  await e.down(.2,.2);e.move(.2,1.2);await e.up();
+  const after=e.buffer('A').data.cells;
+  assert.equal(e.commits.length,1);assert.equal(e.commits[0].size,1);
+  assert.equal(after[4],before.A.cells[0]);assert.equal(after[6],before.A.cells[2]);
+  assert.equal(after[0],before.A.cells[0]&0xfc00);assert.equal(after[2],before.A.cells[2]&0xfc00);
+  assert.equal(after[1],before.A.cells[1]);assert.equal(after[5],before.A.cells[5]);
+  assert.deepEqual(e.buffer('A').data.map,before.A.map);assert.deepEqual(e.snapshot(e.buffer('B')),before.B);
+  e.undo();assert.deepEqual(e.snapshots(),before);
+});
+
+test('overlapping additive rectangles count each tile once and do not edit terrain',async()=>{
+  const e=environment(),before=e.snapshots();
+  await e.rectangle(.1,.1,1.9,.1);await e.rectangle(1.1,.1,2.9,.1,{shiftKey:true});
+  assert.match(e.$('#tile-selection-hint').textContent,/^3 tiles selected/);assert.deepEqual(e.snapshots(),before);assert.equal(e.commits.length,0);
+  await e.down(.2,.2);e.move(.2,1.2);await e.up();
+  assert.deepEqual(e.buffer('A').data.cells.slice(4,7),before.A.cells.slice(0,3));assert.equal(e.commits.length,1);
+});
+
+for(const modifier of ['ctrlKey','metaKey'])test(`${modifier} adds a tile without moving the existing selection`,async()=>{
+  const e=environment(),before=e.snapshots();await e.rectangle(.1,.1,.1,.1);
+  await e.rectangle(2.1,.1,2.1,.1,{[modifier]:true});
+  assert.match(e.$('#tile-selection-hint').textContent,/^2 tiles selected/);assert.deepEqual(e.snapshots(),before);assert.equal(e.commits.length,0);
+});
+
+test('Alt removes tiles from a selection, preserving removed terrain when the remaining group moves',async()=>{
+  const e=environment(),before=e.snapshots();await e.rectangle(.1,.1,2.9,.1);
+  await e.rectangle(1.1,.1,1.1,.1,{altKey:true});
+  assert.match(e.$('#tile-selection-hint').textContent,/^2 tiles selected/);assert.deepEqual(e.snapshots(),before);
+  await e.down(.2,.2);e.move(.2,1.2);await e.up();
+  const after=e.buffer('A').data.cells;
+  assert.equal(after[4],before.A.cells[0]);assert.equal(after[6],before.A.cells[2]);
+  assert.equal(after[1],before.A.cells[1]);assert.equal(after[5],before.A.cells[5]);
+  assert.equal(e.commits.length,1);e.undo();assert.deepEqual(e.snapshots(),before);
+});
+
+test('removing the last selected tile clears the selection without deleting terrain',async()=>{
+  const e=environment(),before=e.snapshots();await e.rectangle(.1,.1,.1,.1);
+  await e.rectangle(.1,.1,.1,.1,{altKey:true});
+  assert.equal(e.controller.hasSelection(),false);assert.equal(e.$('#tile-selection-erase').disabled,true);
+  assert.deepEqual(e.snapshots(),before);assert.equal(e.commits.length,0);
+});
+
+test('cancelling an additive rectangle restores exactly the previous selection',async()=>{
+  const e=environment(),before=e.snapshots();await e.rectangle(.1,.1,.1,.1);
+  await e.down(2.1,.1,{shiftKey:true});e.move(2.9,1.9);
+  assert.match(e.$('#tile-selection-hint').textContent,/^3 tiles selected/);e.controller.cancel();
+  assert.match(e.$('#tile-selection-hint').textContent,/^1 tile selected/);assert.equal(e.S.drag,null);assert.deepEqual(e.snapshots(),before);
+  await e.down(.2,.2);e.move(.2,1.2);await e.up();
+  const after=e.buffer('A').data.cells;
+  assert.equal(after[4],before.A.cells[0]);assert.equal(after[2],before.A.cells[2]);assert.equal(after[6],before.A.cells[6]);
+  assert.equal(e.commits.length,1);e.undo();assert.deepEqual(e.snapshots(),before);
+});
+
+test('the selection mode menu adds and removes without modifier keys, then returns to dragging',async()=>{
+  const e=environment(),before=e.snapshots();await e.rectangle(.1,.1,.1,.1);
+  e.$('#tile-selection-mode').value='add';await e.rectangle(2.1,.1,2.1,.1);
+  assert.match(e.$('#tile-selection-hint').textContent,/^2 tiles selected/);assert.equal(e.$('#tile-selection-mode').value,'replace');
+  e.$('#tile-selection-mode').value='remove';await e.rectangle(.1,.1,.1,.1);
+  assert.match(e.$('#tile-selection-hint').textContent,/^1 tile selected/);assert.equal(e.$('#tile-selection-mode').value,'replace');
+  assert.deepEqual(e.snapshots(),before);assert.equal(e.commits.length,0);
+  await e.down(2.2,.2);e.move(2.2,1.2);await e.up();
+  assert.equal(e.buffer('A').data.cells[6],before.A.cells[2]);assert.equal(e.buffer('A').data.cells[0],before.A.cells[0]);assert.equal(e.commits.length,1);
+});
+
+test('adding across maps is rejected without discarding the current group or modifying either map',async()=>{
+  const e=environment(),before=e.snapshots();await e.rectangle(.1,.1,1.9,.1);
+  assert.equal(await e.down(6.1,.1,{shiftKey:true}),true);await e.up();
+  assert.equal(e.S.selected,'A');assert.equal(e.S.drag,null);assert.equal(e.controller.hasSelection(),true);
+  assert.match(e.$('#tile-selection-hint').textContent,/^2 tiles selected/);assert.ok(e.toasts.at(-1).bad);assert.match(e.toasts.at(-1).message,/within the selected map/);
+  assert.deepEqual(e.snapshots(),before);assert.equal(e.commits.length,0);
+  await e.down(.2,.2);e.move(.2,1.2);await e.up();assert.deepEqual(e.buffer('A').data.cells.slice(4,6),before.A.cells.slice(0,2));
+  assert.deepEqual(e.snapshot(e.buffer('B')),before.B);assert.equal(e.commits.length,1);
+});
+
+test('a selection assembled from additive rectangles still supports cutting and moving a pixel piece',async()=>{
+  const e=environment(),before=e.snapshots();await e.rectangle(.1,.1,1.9,.1);
+  await e.rectangle(.1,1.1,1.9,1.9,{shiftKey:true});assert.match(e.$('#tile-selection-hint').textContent,/^4 tiles selected/);
+  e.S.tool='cut';await e.down(0,0);e.move(1,1);e.move(2,2);await e.up();
+  assert.equal(e.S.tool,'move');assert.match(e.$('#tile-selection-hint').textContent,/2 pieces/);assert.deepEqual(e.snapshots(),before);
+  const chosen=e.pixel('A',2,24),untouched=e.pixel('A',25,2);
+  await e.down(2/16,24/16);e.move(5/16,29/16);await e.up();
+  assert.equal(e.pixel('A',5,29),chosen);assert.equal(e.pixel('A',25,2),untouched);assert.equal(e.commits.length,1);
   e.undo();assert.deepEqual(e.snapshots(),before);
 });
 

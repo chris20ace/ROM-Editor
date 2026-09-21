@@ -4,21 +4,39 @@
   root.WorldMapBoxes={create};
   function create(d){
     const {S,$,api,map,screen,render,toast,status,selectMap,ensureBuffer,dialog,esc}=d;
-    let positions={},revision=null,originals=new Map(),undoMoves=[];
+    let positions={},revision=null,originals=new Map(),undoMoves=[],selected=new Set(),marqueeReady=false;
     const active=()=>S.mode==='terrain'&&['arrange','splitmap'].includes(S.tool);
     const minimum=axis=>axis==='vertical'?8:7;
     const length=(row,axis)=>axis==='vertical'?row.width:row.height;
     function defaultAxis(row){const first=row.width>=row.height?'vertical':'horizontal';return length(row,first)>=2*minimum(first)?first:first==='vertical'?'horizontal':'vertical';}
+    const included=row=>!!row&&(!d.included||d.included(row));
+    const selectedRows=()=>S.maps.filter(row=>selected.has(row.name)&&included(row));
     function sync(){
+      for(const name of selected)if(!included(map(name)))selected.delete(name);
+      const arranging=S.tool==='arrange',working=S.busy||S.finishing,count=selected.size;
       $('#map-box-options').hidden=!active();
       $('#map-box-hint').textContent=S.tool==='splitmap'
         ? 'Split the whole route: draw a straight line across its box, or choose Split in half.'
-        : 'Drag a map box to place it on the world canvas. Positions save automatically. Use Connections to change walking links.';
+        : marqueeReady?'Drag a rectangle around map boxes. Shift adds to the group.'
+          : 'Shift-click maps to add or remove them. Drag a selected map to move the group. Positions save automatically.';
+      $('#map-box-count').hidden=!arranging;
+      $('#map-box-count').textContent=`${count} map${count===1?'':'s'} selected`;
+      $('#select-map-boxes').hidden=!arranging;
+      $('#select-map-boxes').disabled=!S.ready||working||!!S.drag;
+      $('#select-map-boxes').setAttribute('aria-pressed',String(marqueeReady));
+      $('#clear-map-selection').hidden=!arranging;
+      $('#clear-map-selection').disabled=!count||working||!!S.drag;
       $('#split-midpoint').hidden=S.tool!=='splitmap';
-      $('#split-midpoint').disabled=!S.ready||S.busy||S.finishing||!map();
-      $('#undo-map-move').hidden=S.tool!=='arrange';
-      $('#undo-map-move').disabled=!undoMoves.length||S.busy||S.finishing;
+      $('#split-midpoint').disabled=!S.ready||working||!map();
+      $('#undo-map-move').hidden=!arranging;
+      $('#undo-map-move').disabled=!undoMoves.length||working||!!S.drag;
     }
+    function focusMap(name){
+      if(!included(map(name)))return;
+      if(!selected.has(name))selected=new Set([name]);
+      sync();render();
+    }
+    function clearSelection(){if(S.busy||S.finishing)return;cancel();selected.clear();marqueeReady=false;sync();render();}
     function updateBounds(){
       if(!S.catalog)return;
       S.catalog.bounds=d.boundsOf(S.maps);
@@ -29,18 +47,44 @@
     function apply(){for(const row of S.maps){const p=positions[row.name]||originals.get(row.name);if(p){row.x=p.x;row.y=p.y;}}updateBounds();render();}
     async function load(){
       const value=await api('/api/worldmap/positions');revision=value.revision;positions=value.positions;
-      originals=new Map(S.maps.map(row=>[row.name,{x:row.x,y:row.y}]));undoMoves=[];apply();sync();
+      originals=new Map(S.maps.map(row=>[row.name,{x:row.x,y:row.y}]));undoMoves=[];selected.clear();marqueeReady=false;apply();sync();
     }
     async function savePositions(updates){
       const saved=await api('/api/worldmap/positions',{revision,positions:updates});revision=saved.revision;positions=saved.positions;apply();sync();
     }
-    function cancel(){const drag=S.drag;if(!drag?.mapBox)return false;if(drag.mapBox==='move'){const row=map(drag.name);Object.assign(row,drag.origin);}S.drag=null;sync();render();return true;}
+    function restoreOrigins(drag){for(const[name,origin]of Object.entries(drag.origins||{})){const row=map(name);if(row)Object.assign(row,origin);}updateBounds();}
+    function cancel(){
+      const drag=S.drag,armed=marqueeReady;marqueeReady=false;
+      if(!drag?.mapBox){if(armed){sync();render();}return armed;}
+      if(drag.mapBox==='move')restoreOrigins(drag);
+      if(drag.mapBox==='marquee')selected=new Set(drag.previous);
+      S.drag=null;sync();render();return true;
+    }
     async function pointerDown(event,p,row,press){
-      if(!active()||event.button!==0||!row)return false;
-      // Map placement uses catalog geometry; artwork can load while the box is dragged.
+      if(!active()||event.button!==0)return false;
+      if(S.pointerActive!==event.pointerId||S.press!==press)return true;
+      if(S.tool==='splitmap'){
+        if(!row)return false;
+        if(S.selected!==row.name||!d.buffer(row.name))selectMap(row.name);
+        S.drag={mapBox:'split',name:row.name,start:p,last:p,origin:{x:row.x,y:row.y}};sync();render();return true;
+      }
+      const additive=event.shiftKey||event.ctrlKey||event.metaKey;
+      if(marqueeReady||!row){
+        const previous=new Set(selected);marqueeReady=false;
+        S.drag={mapBox:'marquee',start:p,last:p,previous,additive};
+        if(!additive)selected.clear();sync();render();return true;
+      }
+      if(!included(row))return true;
+      if(additive){
+        if(selected.has(row.name))selected.delete(row.name);
+        else{selected.add(row.name);if(S.selected!==row.name||!d.buffer(row.name))selectMap(row.name);}
+        sync();render();return true;
+      }
+      if(!selected.has(row.name))selected=new Set([row.name]);
+      // Catalog geometry is ready even when this map's artwork is still loading.
       if(S.selected!==row.name||!d.buffer(row.name))selectMap(row.name);
-      if(S.pointerActive!==event.pointerId||S.press!==press||!active())return true;
-      S.drag={mapBox:S.tool==='arrange'?'move':'split',name:row.name,start:p,last:p,origin:{x:row.x,y:row.y}};render();return true;
+      const origins=Object.fromEntries(selectedRows().map(item=>[item.name,{x:item.x,y:item.y}]));
+      S.drag={mapBox:'move',name:row.name,start:p,last:p,origins};sync();render();return true;
     }
     function cutFor(drag){
       const row=map(drag.name),dx=Math.abs(drag.last.x-drag.start.x),dy=Math.abs(drag.last.y-drag.start.y);
@@ -49,22 +93,47 @@
       const coordinate=axis==='vertical'?(drag.start.x+drag.last.x)/2-row.x:(drag.start.y+drag.last.y)/2-row.y;
       return {axis,cut:Math.max(min,Math.min(span-min,Math.round(coordinate)))};
     }
-    function pointerMove(p){const drag=S.drag;if(!drag?.mapBox)return false;drag.last=p;if(drag.mapBox==='move'){const row=map(drag.name);row.x=Math.round(drag.origin.x+p.x-drag.start.x);row.y=Math.round(drag.origin.y+p.y-drag.start.y);}render();return true;}
+    function marqueeBounds(drag){return {x:Math.min(drag.start.x,drag.last.x),y:Math.min(drag.start.y,drag.last.y),right:Math.max(drag.start.x,drag.last.x),bottom:Math.max(drag.start.y,drag.last.y)};}
+    function updateMarquee(drag){
+      const area=marqueeBounds(drag),next=new Set(drag.additive?drag.previous:[]);
+      if(area.right>area.x&&area.bottom>area.y)for(const row of S.maps){
+        if(included(row)&&row.x>=area.x&&row.y>=area.y&&row.x+row.width<=area.right&&row.y+row.height<=area.bottom)next.add(row.name);
+      }
+      selected=next;
+    }
+    function pointerMove(p){
+      const drag=S.drag;if(!drag?.mapBox)return false;drag.last=p;
+      if(drag.mapBox==='move'){
+        const dx=Math.round(p.x-drag.start.x),dy=Math.round(p.y-drag.start.y);
+        for(const[name,origin]of Object.entries(drag.origins)){const row=map(name);if(row){row.x=origin.x+dx;row.y=origin.y+dy;}}
+      }
+      if(drag.mapBox==='marquee'){updateMarquee(drag);sync();}
+      render();return true;
+    }
     async function finish(drag){
       if(!drag?.mapBox)return false;
       if(drag.mapBox==='split'){const {axis,cut}=cutFor(drag);await split(axis,cut);return true;}
-      const row=map(drag.name),next={x:row.x,y:row.y};if(next.x===drag.origin.x&&next.y===drag.origin.y)return true;
+      if(drag.mapBox==='marquee'){
+        updateMarquee(drag);marqueeReady=false;
+        if(selected.size&&!selected.has(S.selected))selectMap(selected.values().next().value);
+        sync();render();return true;
+      }
+      const updates={},previous={};
+      for(const[name,origin]of Object.entries(drag.origins)){
+        const row=map(name);if(!row||row.x===origin.x&&row.y===origin.y)continue;
+        updates[name]={x:row.x,y:row.y};previous[name]=positions[name]?{...positions[name]}:null;
+      }
+      if(!Object.keys(updates).length){sync();return true;}
       S.finishing=true;status();
-      const previous=positions[row.name]?{...positions[row.name]}:null;
-      try{await savePositions({[row.name]:next});undoMoves.push({name:row.name,previous});toast('Map position saved. Drag another box, or use Undo map move.');}
-      catch(err){Object.assign(row,drag.origin);toast(err.message,true);}
+      try{await savePositions(updates);undoMoves.push(previous);toast(`${Object.keys(updates).length===1?'Map position':'Map positions'} saved. Undo map move restores the whole group.`);}
+      catch(err){restoreOrigins(drag);toast(err.message,true);}
       finally{S.finishing=false;status();render();}
       return true;
     }
     async function undoMove(){
-      if(!undoMoves.length||S.busy||S.finishing)return;
+      if(!undoMoves.length||S.busy||S.finishing||S.drag)return;
       S.finishing=true;status();const entry=undoMoves[undoMoves.length-1];
-      try{await savePositions({[entry.name]:entry.previous});undoMoves.pop();toast('Map move undone.');}catch(err){toast(err.message,true);}finally{S.finishing=false;status();render();}
+      try{await savePositions(entry);undoMoves.pop();toast('Map move undone.');}catch(err){toast(err.message,true);}finally{S.finishing=false;status();render();}
     }
     async function split(axis,cut){
       if(!S.ready||S.busy||S.finishing)return;const row=map();if(!row)return;
@@ -97,17 +166,28 @@
       d.setTool('arrange');d.fitBounds(d.boundsOf(result.parts.map(part=>map(part.name))));toast('Route split into two editable maps. Drag either box to position it.');
     }
     function draw(){
-      if(!active())return;const drag=S.drag,row=drag?.mapBox?map(drag.name):map();if(!row)return;const p=screen(row.x,row.y),w=row.width*S.scale,h=row.height*S.scale;
-      ctxSave();
+      if(!active())return;const drag=S.drag;ctxSave();
       if(S.tool==='splitmap'){
+        const row=drag?.mapBox==='split'?map(drag.name):map();if(!row){d.ctx.restore();return;}
+        const p=screen(row.x,row.y),w=row.width*S.scale,h=row.height*S.scale;
         const {axis,cut}=drag?.mapBox==='split'?cutFor(drag):{axis:defaultAxis(row),cut:Math.floor(length(row,defaultAxis(row))/2)};
         const x=p.x+(axis==='vertical'?cut*S.scale:0),y=p.y+(axis==='horizontal'?cut*S.scale:0);
         d.ctx.beginPath();d.ctx.moveTo(x,y);d.ctx.lineTo(axis==='vertical'?x:x+w,axis==='vertical'?y+h:y);d.ctx.strokeStyle='#fff';d.ctx.lineWidth=5;d.ctx.stroke();d.ctx.strokeStyle='#c74472';d.ctx.lineWidth=2;d.ctx.setLineDash([6,4]);d.ctx.stroke();
-      }else{d.ctx.strokeStyle='#18758a';d.ctx.lineWidth=3;d.ctx.setLineDash([8,4]);d.ctx.strokeRect(p.x-2,p.y-2,w+4,h+4);}
+      }else{
+        d.ctx.strokeStyle='#18758a';d.ctx.lineWidth=3;d.ctx.setLineDash([8,4]);
+        for(const row of selectedRows()){const p=screen(row.x,row.y);d.ctx.strokeRect(p.x-2,p.y-2,row.width*S.scale+4,row.height*S.scale+4);}
+        if(drag?.mapBox==='marquee'){
+          const area=marqueeBounds(drag),p=screen(area.x,area.y),w=(area.right-area.x)*S.scale,h=(area.bottom-area.y)*S.scale;
+          d.ctx.fillStyle='#18758a';d.ctx.globalAlpha=.12;d.ctx.fillRect(p.x,p.y,w,h);d.ctx.globalAlpha=1;d.ctx.lineWidth=1.5;d.ctx.setLineDash([5,3]);d.ctx.strokeRect(p.x,p.y,w,h);
+        }
+      }
       d.ctx.restore();
     }
     function ctxSave(){d.ctx.save();d.ctx.setLineDash([]);}
     $('#split-midpoint').onclick=()=>split();$('#undo-map-move').onclick=undoMove;
-    return {load,sync,active,pointerDown,pointerMove,finish,cancel,draw,split,hasOverride:name=>!!positions[name]};
+    $('#select-map-boxes').onclick=()=>{if(!active()||S.tool!=='arrange'||S.busy||S.finishing||S.drag)return;marqueeReady=!marqueeReady;sync();render();};
+    $('#clear-map-selection').onclick=clearSelection;
+    return {load,sync,active,pointerDown,pointerMove,finish,cancel,draw,split,focusMap,hasOverride:name=>!!positions[name],
+      key(event){if(event.key!=='Escape'||!active()||S.busy||S.finishing)return false;if(cancel()){event.preventDefault();return true;}if(S.tool==='arrange'&&selected.size){clearSelection();event.preventDefault();return true;}return false;}};
   }
 })(typeof globalThis!=='undefined'?globalThis:this);

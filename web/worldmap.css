@@ -15,3 +15,11 @@
 .map-box-options span{flex:1;line-height:1.5}
 .map-box-options button{white-space:nowrap}
 .route-split-preview{display:block;max-width:100%;max-height:260px;image-rendering:pixelated;margin:14px auto;background:#dce8d0;border:1px solid #bdcdaa}
+
+/* Keep the group controls readable at narrow desktop widths. */
+.map-box-options,.tile-selection-options{flex-wrap:wrap;gap:8px}
+.map-box-options #map-box-hint,.tile-selection-options #tile-selection-hint{flex:1 1 220px}
+.map-box-options #map-box-count{font-size:10px;white-space:nowrap}
+.map-box-options button[aria-pressed="true"]{background:#c8e3e8;border-color:#78a5af;color:#184f60}
+.tile-selection-options select{max-width:145px;padding:5px;font-size:10px}
+.tools button[data-tool="select"] span,.tools button[data-tool="arrange"] span,.tools button[data-tool="move"] span{display:inline}

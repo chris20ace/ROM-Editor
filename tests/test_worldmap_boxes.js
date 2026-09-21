@@ -22,7 +22,7 @@ function harness(options = {}) {
   const ctx = new Proxy({}, {get: (target, key) => target[key] || (target[key] = (...args) => drawCalls.push([key, ...args]))});
   const $ = selector => {
     if (!nodes.has(selector)) nodes.set(selector, {hidden: false, disabled: false, value: '',
-      textContent: '', getContext: () => ctx});
+      textContent: '', attributes: {}, setAttribute(name, value) {this.attributes[name] = value;}, getContext: () => ctx});
     return nodes.get(selector);
   };
   const map = (name = S.selected) => S.maps.find(row => row.name === name);
@@ -75,12 +75,13 @@ function harness(options = {}) {
       ? {axis: $('#route-split-axis').value, cut: $('#route-split-cut').value, new_name: ''}
       : (answer ?? null));
   };
-  const dependencies = {S, $, api, map, ctx, dialog, boundsOf, esc: value => String(value),
+  const dependencies = {S, $, api, map, ctx, dialog, boundsOf, included: row => !options.excluded?.includes(row.name), esc: value => String(value),
     render() {}, toast: (...args) => toasts.push(args), status: () => controller?.sync(),
     screen: (x, y) => ({x: x * S.scale, y: y * S.scale}),
     buffer: name => buffers.get(name), ensureBuffer: async name => buffers.get(name), rasterize: b => b.raster,
     selectMap: async name => {
       S.selected = name;
+      controller.focusMap(name);
       const load = {name, complete: false};
       selectionLoads.push(load);
       if (options.selectionWait) await options.selectionWait;
@@ -98,10 +99,10 @@ function harness(options = {}) {
   const sandbox = vm.createContext({});
   vm.runInContext(source, sandbox, {filename: 'worldmap-boxes.js'});
   controller = sandbox.WorldMapBoxes.create(dependencies);
-  const down = async (point, name = S.selected) => {
+  const down = async (point, name = S.selected, modifiers = {}) => {
     S.press++;
     S.pointerActive = 5;
-    return controller.pointerDown({button: 0, pointerId: 5}, point, map(name), S.press);
+    return controller.pointerDown({button: 0, pointerId: 5, ...modifiers}, point, map(name), S.press);
   };
   const finish = async () => {
     const drag = S.drag;
@@ -343,4 +344,134 @@ test('a map too small on both axes cannot request a source split', async () => {
   assert.equal(h.dialogs.length, 0);
   assert.equal(h.posts().length, 0);
   assert.equal(h.toasts.at(-1)[1], true);
+});
+
+
+test('Shift, Ctrl and Meta click toggle whole maps without starting a drag or saving', async () => {
+  const h = harness();await h.controller.load();
+  assert.equal(h.$('#map-box-count').textContent, '0 maps selected');
+  await h.down({x: 11, y: 21}, 'Route102', {shiftKey: true});
+  await h.down({x: 61, y: 21}, 'PetalburgCity', {ctrlKey: true});
+  assert.equal(h.$('#map-box-count').textContent, '2 maps selected');
+  assert.equal(h.S.drag, null);
+  await h.down({x: 11, y: 21}, 'Route102', {metaKey: true});
+  assert.equal(h.$('#map-box-count').textContent, '1 map selected');
+  await h.down({x: 61, y: 21}, 'PetalburgCity', {shiftKey: true});
+  assert.equal(h.$('#map-box-count').textContent, '0 maps selected');
+  assert.equal(h.posts().length, 0);
+});
+
+test('dragging either selected map translates the entire group with one rounded delta and one atomic save', async () => {
+  const h = harness();await h.controller.load();
+  await h.down({x: 11, y: 21}, 'Route102', {shiftKey: true});
+  await h.down({x: 61, y: 21}, 'PetalburgCity', {shiftKey: true});
+  await h.down({x: 11, y: 21}, 'Route102');
+  h.controller.pointerMove({x: 18.6, y: 25.4});
+  assert.deepEqual(h.S.maps.map(row => ({x: row.x, y: row.y})), [{x: 18, y: 24}, {x: 68, y: 24}]);
+  assert.equal(h.posts().length, 0);
+  await h.finish();
+  assert.equal(h.posts().length, 1);
+  assert.deepEqual(h.posts()[0].body.positions, {Route102: {x: 18, y: 24}, PetalburgCity: {x: 68, y: 24}});
+  assert.equal(h.$('#map-box-count').textContent, '2 maps selected');
+  await h.down({x: 69, y: 25}, 'PetalburgCity');h.controller.pointerMove({x: 70, y: 23});await h.finish();
+  assert.deepEqual(h.posts()[1].body.positions, {Route102: {x: 19, y: 22}, PetalburgCity: {x: 69, y: 22}});
+});
+
+test('one group Undo restores old overrides and removes newly created overrides together', async () => {
+  const h = harness({positions: {Route102: {x: -25, y: 80}}});await h.controller.load();
+  await h.down({x: -24, y: 81}, 'Route102', {shiftKey: true});
+  await h.down({x: 61, y: 21}, 'PetalburgCity', {shiftKey: true});
+  await h.down({x: 61, y: 21}, 'PetalburgCity');h.controller.pointerMove({x: 65, y: 27});await h.finish();
+  await h.$('#undo-map-move').onclick();
+  assert.deepEqual(h.posts()[1].body.positions, {Route102: {x: -25, y: 80}, PetalburgCity: null});
+  assert.deepEqual(h.S.maps.map(row => ({x: row.x, y: row.y})), [{x: -25, y: 80}, {x: 60, y: 20}]);
+  assert.equal(h.$('#undo-map-move').disabled, true);
+});
+
+test('group cancellation and failed save restore every exact map origin', async () => {
+  const h = harness();await h.controller.load();const original = copy(h.S.maps);
+  await h.down({x: 11, y: 21}, 'Route102', {shiftKey: true});
+  await h.down({x: 61, y: 21}, 'PetalburgCity', {shiftKey: true});
+  await h.down({x: 11, y: 21}, 'Route102');h.controller.pointerMove({x: -200, y: 500});
+  assert.equal(h.controller.cancel(), true);assert.deepEqual(h.S.maps, original);assert.equal(h.posts().length, 0);
+  await h.down({x: 11, y: 21}, 'Route102');h.controller.pointerMove({x: 1000, y: 2000});
+  h.failSave(new Error('stale group positions'));await h.finish();
+  assert.deepEqual(h.S.maps, original);assert.equal(h.$('#map-box-count').textContent, '2 maps selected');
+  assert.equal(h.$('#undo-map-move').disabled, true);assert.equal(h.S.finishing, false);
+  assert.equal(h.posts().length, 1);assert.deepEqual(h.S.catalog.bounds, h.boundsOf(original));
+});
+
+test('normal click outside the selected group replaces it with a single map', async () => {
+  const h = harness();await h.controller.load();
+  await h.down({x: 11, y: 21}, 'Route102', {shiftKey: true});
+  await h.down({x: 61, y: 21}, 'PetalburgCity');h.controller.pointerMove({x: 62, y: 22});await h.finish();
+  assert.equal(h.$('#map-box-count').textContent, '1 map selected');
+  assert.deepEqual(h.posts()[0].body.positions, {PetalburgCity: {x: 61, y: 21}});
+});
+
+test('empty-space marquee includes only fully enclosed visible maps and resets on every frame', async () => {
+  const h = harness({rows: [
+    {name: 'A', x: 10, y: 10, width: 10, height: 10},
+    {name: 'B', x: 30, y: 10, width: 10, height: 10},
+    {name: 'HiddenInterior', x: 10, y: 10, width: 10, height: 10},
+  ], excluded: ['HiddenInterior']});await h.controller.load();
+  await h.down({x: 0, y: 0}, null);h.controller.pointerMove({x: 45, y: 25});
+  assert.equal(h.$('#map-box-count').textContent, '2 maps selected');
+  h.controller.pointerMove({x: 35, y: 25});assert.equal(h.$('#map-box-count').textContent, '1 map selected');
+  h.controller.pointerMove({x: 45, y: 25});await h.finish();
+  await h.down({x: 11, y: 11}, 'A');h.controller.pointerMove({x: 12, y: 12});await h.finish();
+  assert.deepEqual(h.posts()[0].body.positions, {A: {x: 11, y: 11}, B: {x: 31, y: 11}});
+  assert.deepEqual({x: h.map('HiddenInterior').x, y: h.map('HiddenInterior').y}, {x: 10, y: 10});
+});
+
+test('additive marquee preserves the pregesture group but removes newly added maps when dragged back', async () => {
+  const h = harness();await h.controller.load();
+  await h.down({x: 11, y: 21}, 'Route102', {shiftKey: true});
+  await h.down({x: 55, y: 15}, null, {ctrlKey: true});h.controller.pointerMove({x: 85, y: 45});
+  assert.equal(h.$('#map-box-count').textContent, '2 maps selected');
+  h.controller.pointerMove({x: 70, y: 45});assert.equal(h.$('#map-box-count').textContent, '1 map selected');
+  h.controller.pointerMove({x: 85, y: 45});await h.finish();
+  assert.equal(h.$('#map-box-count').textContent, '2 maps selected');assert.equal(h.posts().length, 0);
+});
+
+test('Select maps button starts a one-shot marquee on top of a map and cancel restores selection', async () => {
+  const h = harness();await h.controller.load();
+  await h.down({x: 61, y: 21}, 'PetalburgCity', {shiftKey: true});
+  h.$('#select-map-boxes').onclick();assert.equal(h.$('#select-map-boxes').attributes['aria-pressed'], 'true');
+  await h.down({x: 10, y: 20}, 'Route102');h.controller.pointerMove({x: 50, y: 40});
+  assert.equal(h.S.drag.mapBox, 'marquee');assert.equal(h.$('#map-box-count').textContent, '1 map selected');
+  assert.equal(h.controller.cancel(), true);
+  assert.equal(h.$('#select-map-boxes').attributes['aria-pressed'], 'false');
+  await h.down({x: 61, y: 21}, 'PetalburgCity');h.controller.pointerMove({x: 62, y: 22});await h.finish();
+  assert.deepEqual(h.posts()[0].body.positions, {PetalburgCity: {x: 61, y: 21}});
+  h.$('#select-map-boxes').onclick();await h.down({x: 10, y: 20}, 'Route102');h.controller.pointerMove({x: 85, y: 45});await h.finish();
+  assert.equal(h.$('#map-box-count').textContent, '2 maps selected');
+  assert.equal(h.$('#select-map-boxes').attributes['aria-pressed'], 'false');
+});
+
+test('empty click clears selection, additive empty click preserves it, and Escape cancels then clears', async () => {
+  const h = harness();await h.controller.load();
+  await h.down({x: 11, y: 21}, 'Route102', {shiftKey: true});
+  await h.down({x: 0, y: 0}, null, {metaKey: true});await h.finish();
+  assert.equal(h.$('#map-box-count').textContent, '1 map selected');
+  await h.down({x: 0, y: 0}, null);await h.finish();assert.equal(h.$('#map-box-count').textContent, '0 maps selected');
+  await h.down({x: 11, y: 21}, 'Route102');h.controller.pointerMove({x: 30, y: 40});
+  let prevented = 0;const escape = {key: 'Escape', preventDefault() {prevented++;}};
+  assert.equal(h.controller.key(escape), true);assert.equal(h.map().x, 10);assert.equal(h.$('#map-box-count').textContent, '1 map selected');
+  assert.equal(h.controller.key(escape), true);assert.equal(h.$('#map-box-count').textContent, '0 maps selected');
+  assert.equal(h.controller.key(escape), false);assert.equal(prevented, 2);assert.equal(h.posts().length, 0);
+});
+
+test('sidebar focus preserves an existing group, replaces it for another map, and load clears selection and Undo', async () => {
+  const h = harness({rows: [
+    {name: 'A', x: 0, y: 0, width: 10, height: 10}, {name: 'B', x: 20, y: 0, width: 10, height: 10},
+    {name: 'C', x: 40, y: 0, width: 10, height: 10},
+  ]});await h.controller.load();
+  await h.down({x: 1, y: 1}, 'A', {shiftKey: true});await h.down({x: 21, y: 1}, 'B', {shiftKey: true});
+  h.controller.focusMap('A');assert.equal(h.$('#map-box-count').textContent, '2 maps selected');
+  h.controller.draw();assert.equal(h.drawCalls.filter(call => call[0] === 'strokeRect').length, 2);
+  h.controller.focusMap('C');assert.equal(h.$('#map-box-count').textContent, '1 map selected');
+  await h.down({x: 41, y: 1}, 'C');h.controller.pointerMove({x: 42, y: 2});await h.finish();
+  assert.equal(h.$('#undo-map-move').disabled, false);
+  h.resetCatalog();await h.controller.load();assert.equal(h.$('#map-box-count').textContent, '0 maps selected');assert.equal(h.$('#undo-map-move').disabled, true);
 });

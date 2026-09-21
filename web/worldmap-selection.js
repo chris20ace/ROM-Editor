@@ -10,19 +10,25 @@
     const active = () => S.mode === 'terrain' && ['move', 'cut'].includes(S.tool);
     const local = (row, p) => ({x: (p.x - row.x) * 16, y: (p.y - row.y) * 16});
     const relative = p => {const q=local(map(selection.name),p);return {x:q.x-selection.x,y:q.y-selection.y};};
+    function selectionLabel(){
+      selection.count??=selection.mask.reduce((sum,value)=>sum+value,0);
+      return selection.pixel?`${selection.count.toLocaleString()} pixels selected`:`${selection.count/256} tile${selection.count===256?'':'s'} selected`;
+    }
     function sync() {
       const bar=$('#tile-selection-options');bar.hidden=!active();
+      $('#tile-selection-mode').hidden=S.tool!=='move';
+      $('#tile-selection-mode').disabled=S.busy||S.finishing||!!S.drag;
       $('#tile-selection-erase').disabled=!selection||!!selection.regions||S.busy||S.finishing||!!S.drag;
       $('#tile-selection-clear').disabled=!selection||S.busy||S.finishing;
       $('#tile-selection-hint').textContent=selection?.regions
         ? `${selection.regions.length} pieces · Click and drag the piece you want to move.`
         : S.tool==='cut'
-          ? (selection?'Draw from one selection edge to another, or draw a closed loop.':'Select an area with Move tiles first, or click a tile to select it.')
+          ? (selection?'Draw from one selection edge to another, or draw a closed loop.':'Select an area with Select tiles first, or click a tile to select it.')
           : selection
-            ? `${selection.width} × ${selection.height} pixels · Drag inside to move${selection.pixel?' freely.':'; drag outside for a new selection.'} Cut line divides this selection.`
-            : 'Drag a rectangle to select tiles. Then drag inside it to move them.';
+            ? `${selectionLabel()} · Drag the highlight to move together. Shift adds; Alt removes.`
+            : 'Drag a box around tiles, then drag the highlight to move them together. Shift adds; Alt removes.';
     }
-    function clear() {version++;if(S.drag?.tileRegion)S.drag=null;selection=null;sync();render();}
+    function clear() {version++;if(S.drag?.tileRegion)S.drag=null;selection=null;$('#tile-selection-mode').value='replace';sync();render();}
     function cancel() {if(S.drag?.tileRegion){selection=S.drag.previous??null;S.drag=null;}version++;sync();render();}
     function contains(p) {if(!selection)return false;const q=relative(p),x=Math.floor(q.x),y=Math.floor(q.y);return x>=0&&y>=0&&x<selection.width&&y<selection.height&&!!selection.mask[y*selection.width+x];}
     function rectangle(row,a,b) {
@@ -32,10 +38,19 @@
       return {name:row.name,x:Math.min(ax,bx)*16,y:Math.min(ay,by)*16,width,height,mask:geometry.rectangle(width,height),pixel:false};
     }
     function trim(piece) {
-      const b=geometry.bounds(piece.mask,piece.width,piece.height);if(!b)return piece;
+      const b=geometry.bounds(piece.mask,piece.width,piece.height);if(!b)return null;
       const mask=new Uint8Array(b.width*b.height);
       for(let y=0;y<b.height;y++)mask.set(piece.mask.subarray((y+b.y)*piece.width+b.x,(y+b.y)*piece.width+b.x+b.width),y*b.width);
-      return {...piece,x:piece.x+b.x,y:piece.y+b.y,width:b.width,height:b.height,mask,regions:null,overlay:null,overlays:null};
+      return {...piece,x:piece.x+b.x,y:piece.y+b.y,width:b.width,height:b.height,mask,count:undefined,regions:null,overlay:null,overlays:null};
+    }
+    function combine(previous,rect,operation){
+      if(operation==='replace'||!previous)return operation==='remove'?null:rect;
+      const x=Math.min(previous.x,rect.x),y=Math.min(previous.y,rect.y);
+      const width=Math.max(previous.x+previous.width,rect.x+rect.width)-x,height=Math.max(previous.y+previous.height,rect.y+rect.height)-y;
+      const mask=new Uint8Array(width*height);
+      for(let r=0;r<previous.height;r++)mask.set(previous.mask.subarray(r*previous.width,(r+1)*previous.width),(r+previous.y-y)*width+previous.x-x);
+      for(let r=0;r<rect.height;r++)mask.fill(operation==='remove'?0:1,(r+rect.y-y)*width+rect.x-x,(r+rect.y-y)*width+rect.x-x+rect.width);
+      return trim({...previous,x,y,width,height,mask});
     }
     function maskedImage(piece,tint) {
       const c=document.createElement('canvas');c.width=piece.width;c.height=piece.height;const context=c.getContext('2d');
@@ -53,11 +68,13 @@
     }
     async function pointerDown(event,p,row,press) {
       if(!active()||event.button!==0)return false;
-      if(selection?.regions&&contains(p)) {
+      const operation=S.tool==='move'?(event.altKey?'remove':event.shiftKey||event.ctrlKey||event.metaKey?'add':$('#tile-selection-mode').value||'replace'):'replace';
+      if(operation!=='replace'&&selection&&row&&row.name!==selection.name){toast('Add or remove tiles within the selected map. Move maps selects entire map boxes.',true);return true;}
+      if(selection?.regions&&contains(p)&&operation==='replace') {
         const q=relative(p),i=geometry.regionAt(selection.regions,selection.width,selection.height,Math.floor(q.x),Math.floor(q.y));
         if(i>=0){selection=trim({...selection,mask:selection.regions[i],pixel:true});setTool('move');}
       }
-      if(S.tool==='move'&&contains(p)&&!selection.regions) {
+      if(S.tool==='move'&&contains(p)&&!selection.regions&&operation==='replace') {
         S.drag={tileRegion:'move',start:p,dx:0,dy:0,piece:maskedImage(selection),previous:selection};sync();render();return true;
       }
       if(S.tool==='cut'&&selection&&!selection.regions) {
@@ -72,13 +89,13 @@
       if(expected!==version)return true;
       if(S.scale<3){d.fitSelection();toast('Zoomed in. Drag again to select terrain.');return true;}
       const start=local(row,p),previous=selection;
-      selection=rectangle(row,start,start);
-      if(S.tool==='cut'){toast('Tile selected. Draw a line across it, or use Move tiles to select a larger area.');sync();render();return true;}
-      S.drag={tileRegion:'select',name:row.name,start,previous};sync();render();return true;
+      selection=combine(previous,rectangle(row,start,start),operation);
+      if(S.tool==='cut'){toast('Tile selected. Draw a line across it, or use Select tiles to select a larger area.');sync();render();return true;}
+      S.drag={tileRegion:'select',name:row.name,start,previous,operation};sync();render();return true;
     }
     function pointerMove(p) {
       const drag=S.drag;if(!drag?.tileRegion)return false;
-      if(drag.tileRegion==='select')selection=rectangle(map(drag.name),drag.start,local(map(drag.name),p));
+      if(drag.tileRegion==='select'){selection=combine(drag.previous,rectangle(map(drag.name),drag.start,local(map(drag.name),p)),drag.operation);sync();}
       if(drag.tileRegion==='cut'){
         const q=cutPoint(p),last=drag.path[drag.path.length-1];
         if(q.x!==last.x||q.y!==last.y)drag.path.push(q);
@@ -91,6 +108,7 @@
     }
     async function finish(drag) {
       if(!drag?.tileRegion)return false;
+      if(drag.tileRegion==='select')$('#tile-selection-mode').value='replace';
       if(drag.tileRegion==='cut'&&selection){
         const path=drag.path,first=path[0],last=path[path.length-1];
         if(path.length>3&&Math.hypot(first.x-last.x,first.y-last.y)<=3)path[path.length-1]={...first};
@@ -113,7 +131,7 @@
           Object.assign(source.data,plan.source);Object.assign(dest.data,plan.target);rasterize(source);if(dest!==source)rasterize(dest);commit(before);
           if(target.name!==S.selected)await selectMap(target.name);
           selection={...old,x:destination.x,y:destination.y,name:target.name,overlay:null,overlays:null};
-          toast(old.pixel?'Piece moved. Save world to keep it; Ctrl Z to undo.':'Tiles moved. Ctrl Z to undo.');
+          toast(old.pixel?'Piece moved. Save world to keep it; Ctrl Z to undo.':`${old.count/256} tile${old.count===256?'':'s'} moved together. Save world to keep them; Ctrl Z to undo.`);
         }catch(err){toast(err.message,true);}finally{S.finishing=false;d.status();}
       }
       sync();render();return true;
