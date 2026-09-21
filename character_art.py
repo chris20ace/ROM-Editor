@@ -283,6 +283,8 @@ class CharacterArt(Player):
         result['categories'] = dict(Counter(a['category'] for a in result['assets']))
         result['sharing_note'] = 'Editing a shared sheet changes every listed character using it. Shared palettes recolor every listed sheet.'
         result['scope_note'] = 'Player art, every trainer battle portrait/back sheet, and all mapped non-Pokémon people and object sheets. Pokémon graphics are protected.'
+        from character_groups import build_groups
+        result['groups'] = build_groups(self.source, result['assets'])
         return result
 
     def plan_save(self, body):
