@@ -11,7 +11,7 @@
     {id:'areas', group:'This place', label:'Buildings & interiors', detail:'Organize rooms, floors and buildings; add new interiors.', map:true, url:name=>`/areas?map=${mapQuery(name)}`},
     {id:'starters', group:'Campaign', label:'Starter Pokémon', detail:'Choose the three Pokémon offered at the start.', url:()=>'/campaign?tab=starters'},
     {id:'trainers', group:'Campaign', label:'Trainers & gym leaders', detail:'Teams, levels, portraits, items and battle settings.', url:()=>'/campaign?tab=trainers'},
-    {id:'player', group:'Campaign', label:'Player appearance', detail:'Edit the player’s overworld and battle appearance.', url:()=>'/player'},
+    {id:'player', group:'Campaign', label:'Character appearance', detail:'Edit players, trainers, gym leaders, NPCs, and objects.', url:()=>'/player'},
     {id:'region', group:'Campaign', label:'PokéNav region picture', detail:'Edit the in-game region artwork and named grid.', url:()=>'/region'},
     {id:'encounters', group:'Game systems', label:'Wild encounters', detail:'Edit the source table of encounters across all maps.', url:()=>source('src/data/wild_encounters.json')},
     {id:'items', group:'Game systems', label:'Items & economy', detail:'Edit item definitions; shops and rewards use scripts.', url:()=>source('src/data/items.h')},

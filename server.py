@@ -372,6 +372,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200, self.project.world.get_map(value('name'), value('primary') or None, value('secondary') or None))
             if request.path == '/api/world/objects':
                 return self.respond(200, self.project.world.object_catalog())
+            if request.path == '/api/pokemon/preview':
+                from pokemon_previews import PokemonPreviews
+                with self.project.lock:
+                    return self.respond(200, PokemonPreviews(self.project.source).preview(value('species')), 'image/png')
+            if request.path in ('/api/appearance', '/api/appearance/asset', '/api/appearance/preview'):
+                from character_art import CharacterArt
+                with self.project.lock:
+                    artwork = CharacterArt(self.project.source)
+                    if request.path == '/api/appearance':
+                        return self.respond(200, artwork.catalog())
+                    if request.path.endswith('/preview'):
+                        return self.respond(200, artwork.preview(value('path'), palette_path=value('palette_path') or None), 'image/png')
+                    return self.respond(200, artwork.get_asset(value('path'), palette_path=value('palette_path') or None))
             if request.path == '/api/player':
                 from player import Player
                 with self.project.lock:
@@ -502,6 +515,12 @@ class Handler(BaseHTTPRequestHandler):
                     plan = self.project.world.plan_new(name, body.get('template', 'LittlerootTown'), body.get('width', 20), body.get('height', 20))
                     saved = self.project.commit(plan, 'New blank map: ' + str(name))
                     result = {**self.project.world.get_map(name), 'transaction': saved['id'], 'message': saved['message']}
+            elif self.path == '/api/appearance/save':
+                from character_art import CharacterArt
+                with self.project.lock:
+                    saved = self.project.commit(CharacterArt(self.project.source).plan_save(body), 'Character appearance: ' + str(body.get('path')))
+                    result = {'asset': CharacterArt(self.project.source).get_asset(body.get('path'), palette_path=body.get('palette_path') or None),
+                              'transaction': saved['id'], 'message': saved['message']}
             elif self.path == '/api/player/save':
                 from player import Player
                 with self.project.lock:

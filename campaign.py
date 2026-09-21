@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 
 from records import Records, _closing, _mask, _members, _skip
+from character_art import CharacterArt
 
 
 STARTERS = "src/starter_choose.c"
@@ -98,10 +99,16 @@ class Campaign:
         for path in sorted((self.source / "data/maps").glob("*/scripts.inc")):
             if (path.parent / "map.json").is_file():
                 maps.append({"id": path.parent.name, "name": re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", path.parent.name)})
-        return {**catalog, "maps": maps, "pokemonDefinitionsProtected": True,
+        return {**catalog, "pictures": self._pictures(), "maps": maps, "pokemonDefinitionsProtected": True,
                 "notes": {"starters": "Changes the three Birch bag choices. Rival teams, scripted gifts and story references are edited separately.",
                           "trainers": "Each battle and rematch has its own team. Badges, leader dialogue, rewards and progression are map scripts.",
                           "story": "Dialogue forms edit existing text blocks. Full story flow uses the map's event script; compilation and playtesting are still required."}}
+
+    def _pictures(self):
+        """Join every valid battle portrait ID to its source artwork and palette."""
+        catalog, _ = self._catalog()
+        artwork = {row["id"]: row for row in CharacterArt(self.source).trainer_pictures()}
+        return [{**row, **artwork.get(row["id"], {})} for row in catalog["pictures"]]
 
     @staticmethod
     def _check_revision(body, revision):
@@ -214,17 +221,20 @@ class Campaign:
 
     def trainers(self, identifier=None):
         _, party_text, entries, revision = self._trainer_data()
+        pictures = {row["id"]: row for row in self._pictures()}
         if not identifier:
             return {"revision": revision, "trainers": [
                 {"id": key, "name": entry["name"], "label": _label(key, "TRAINER_"),
                  "gym": entry["values"]["trainerClass"] == "TRAINER_CLASS_LEADER",
-                 "class": entry["values"]["trainerClass"]} for key, entry in entries.items()]}
+                 "class": entry["values"]["trainerClass"], "trainerPic": entry["values"]["trainerPic"],
+                 "portrait": pictures.get(entry["values"]["trainerPic"])} for key, entry in entries.items()]}
         if not isinstance(identifier, str) or identifier not in entries:
             raise ValueError("Choose an existing trainer")
         entry = entries[identifier]
         party, _, _ = self._party(party_text, entry)
         return {"id": identifier, "revision": revision, "fields": self._trainer_fields(entry),
                 "variant": entry["variant"], "party": party, "partyName": entry["partyName"],
+                "portrait": pictures.get(entry["values"]["trainerPic"]),
                 "sources": [TRAINERS, PARTIES]}
 
     def _validate_fields(self, fields, catalog):

@@ -119,6 +119,74 @@
     if (found?.sprite) node.style.backgroundImage = `url("${found.sprite}")`;
     node.role = 'img'; node.setAttribute('aria-label', found?.name || species); return node;
   }
+  function portrait(id) { return state.meta.pictures.find(row => row.id === id); }
+  function portraitImage(picture, cls = '') {
+    if (!picture?.preview_url) return el('span', `portrait-missing ${cls}`, 'No preview');
+    const image = el('img', `trainer-portrait ${cls}`); image.src = picture.preview_url;
+    image.alt = `${picture.name} battle portrait`; image.loading = 'lazy'; image.width = 64; image.height = 64;
+    image.addEventListener('error', () => { image.replaceWith(el('span', `portrait-missing ${cls}`, 'Preview unavailable')); }, {once:true});
+    return image;
+  }
+  function partySprite(species) {
+    const image = el('img', 'party-sprite'); image.width = 64; image.height = 64;
+    image.src = `/api/pokemon/preview?species=${encodeURIComponent(species)}`;
+    image.alt = state.meta.species.find(row => row.id === species)?.name || species;
+    image.addEventListener('error', () => { image.replaceWith(el('span', 'party-sprite-missing', 'Preview unavailable')); }, {once:true});
+    return image;
+  }
+  function portraitPicker(data) {
+    const section = el('section', 'portrait-picker'), preview = el('div', 'portrait-current');
+    section.setAttribute('aria-label', 'Battle portrait');
+    const pictureBox = el('div', 'portrait-current-image'), info = el('div', 'portrait-current-info');
+    const name = el('strong'), identifier = el('small', 'mono'), edit = el('a', 'portrait-edit', 'Edit this character’s artwork');
+    edit.addEventListener('click', async event => {
+      if (!state.dirty && !state.busy) return;
+      event.preventDefault(); if (await leave()) location.href = edit.href;
+    });
+    info.append(el('span', 'portrait-caption', 'BATTLE APPEARANCE'), name, identifier, edit);
+    preview.append(pictureBox, info);
+    const picker = el('details', 'portrait-choices');
+    picker.append(el('summary', '', `Choose a battle portrait · ${state.meta.pictures.length} pictures`));
+    const controls = el('div', 'portrait-controls');
+    const select = options(state.meta.pictures, data.trainerPic);
+    select.setAttribute('aria-label', 'Battle portrait');
+    const search = el('input'); search.type = 'search'; search.placeholder = 'Search names or portrait IDs…';
+    search.setAttribute('aria-label', 'Search battle portraits');
+    controls.append(field('Portrait name', select), field('Find a picture', search));
+    const count = el('p', 'portrait-count'); count.setAttribute('aria-live', 'polite');
+    const gallery = el('div', 'portrait-gallery'); gallery.setAttribute('aria-label', 'All battle portraits');
+    function choose(id) {
+      if (data.trainerPic === id) return;
+      data.trainerPic = id; dirty(); update(); renderRecordList();
+    }
+    function update() {
+      const selected = portrait(data.trainerPic);
+      pictureBox.replaceChildren(portraitImage(selected));
+      name.textContent = selected?.name || data.trainerPic; identifier.textContent = data.trainerPic;
+      edit.hidden = !selected?.path;
+      edit.href = selected?.path ? `/player?category=trainers&path=${encodeURIComponent(selected.path)}` : '/player?category=trainers';
+      select.value = data.trainerPic;
+      gallery.querySelectorAll('button').forEach(node => node.setAttribute('aria-pressed', String(node.dataset.portrait === data.trainerPic)));
+    }
+    function renderGallery() {
+      const query = search.value.toLowerCase().replaceAll('_', ' ').trim();
+      const rows = state.meta.pictures.filter(row => `${row.name} ${row.id}`.toLowerCase().replaceAll('_', ' ').includes(query));
+      count.textContent = `${rows.length} of ${state.meta.pictures.length} portraits`;
+      gallery.replaceChildren();
+      for (const row of rows) {
+        const tile = button('', () => choose(row.id), 'portrait-option');
+        tile.dataset.portrait = row.id; tile.title = row.id;
+        tile.setAttribute('aria-label', `${row.name} · ${row.id}`);
+        tile.setAttribute('aria-pressed', String(row.id === data.trainerPic));
+        tile.append(portraitImage(row), el('span', '', row.name)); gallery.append(tile);
+      }
+      if (!rows.length) gallery.append(el('p', 'side-help', 'No matching pictures. Try a trainer name or portrait ID.'));
+    }
+    select.addEventListener('change', () => choose(select.value));
+    search.addEventListener('input', renderGallery);
+    picker.append(controls, count, gallery); section.append(preview, picker); renderGallery(); update();
+    return section;
+  }
   function renderSidebar() {
     const side = $('#sidebar'); side.replaceChildren();
     if (state.tab === 'starters') {
@@ -147,10 +215,16 @@
     list.replaceChildren();
     for (const row of rows) {
       const selected = state.current && (trainer ? state.current.id : state.current.map) === row.id;
-      const node = button(trainer ? row.name : row.name, async () => {
+      const node = button(trainer ? '' : row.name, async () => {
         if (selected || !(await leave())) return; await loadRecord(row.id);
-      }, `record${selected ? ' selected' : ''}`);
-      if (trainer) node.append(el('small', '', row.label));
+      }, `record${trainer ? ' trainer-record' : ''}${selected ? ' selected' : ''}`);
+      if (trainer) {
+        const copy = el('span', 'trainer-record-copy'); copy.append(el('span', '', row.name), el('small', '', row.label));
+        const selectedId = selected ? state.current.fields.trainerPic : row.trainerPic;
+        const image = portraitImage(portrait(selectedId) || row.portrait, 'trainer-list-portrait');
+        if (image.tagName === 'IMG') image.alt = '';
+        node.append(image, copy);
+      }
       node.setAttribute('aria-pressed', String(!!selected)); list.append(node);
     }
     if (!rows.length) list.append(el('p', 'side-help', 'No matching records. Try a broader search.'));
@@ -187,10 +261,10 @@
   function renderTrainer() {
     const record = state.current, data = record.fields, root = $('#editor');
     root.replaceChildren(heading(data.trainerName, record.id.replace('TRAINER_', '').replaceAll('_', ' '), `${record.party.length} / 6 POKÉMON`));
+    root.append(portraitPicker(data));
     const grid = el('div', 'field-grid');
     grid.append(textField('Battle name · 10 characters', data.trainerName, value => data.trainerName = value, {maxLength:10}),
-      selectField('Trainer class', state.meta.classes, data.trainerClass, value => data.trainerClass = value),
-      selectField('Battle portrait', state.meta.pictures, data.trainerPic, value => data.trainerPic = value));
+      selectField('Trainer class', state.meta.classes, data.trainerClass, value => data.trainerClass = value));
     const music = data.encounterMusic_gender.split('|').map(s => s.trim());
     let musicName = music.find(s => s !== 'F_TRAINER_FEMALE'); let female = music.includes('F_TRAINER_FEMALE');
     const updateMusic = () => data.encounterMusic_gender = (female ? 'F_TRAINER_FEMALE | ' : '') + musicName;
@@ -215,8 +289,10 @@
     record.party.forEach((mon, index) => {
       const card = el('article', 'party-card'), top = el('div', 'row'); top.append(el('span', 'party-number', `PARTY ${String(index + 1).padStart(2,'0')}`));
       const remove = button('Remove', () => { record.party.splice(index, 1); dirty(); renderTrainer(); }, 'remove'); remove.disabled = record.party.length <= 1; top.append(remove); card.append(top);
-      const fields = el('div', 'field-grid'); fields.append(selectField('Pokémon', state.meta.species, mon.species, value => mon.species = value, true),
-        textField('Level', mon.lvl, value => mon.lvl = value, {type:'number',min:1,max:100}),
+      const species = el('div', 'party-species'), picture = el('div', 'party-sprite-box'); picture.append(partySprite(mon.species));
+      species.append(picture, selectField('Pokémon', state.meta.species, mon.species, value => { mon.species = value; picture.replaceChildren(partySprite(value)); }));
+      card.append(species);
+      const fields = el('div', 'field-grid'); fields.append(textField('Level', mon.lvl, value => mon.lvl = value, {type:'number',min:1,max:100}),
         textField('IV strength · 0–255', mon.iv, value => mon.iv = value, {type:'number',min:0,max:255}));
       if ('heldItem' in mon) fields.append(selectField('Held item', state.meta.items, mon.heldItem, value => mon.heldItem = value, true));
       if (mon.moves) { const moves = el('div', 'moves-grid'); mon.moves.forEach((move, slot) => { const select = options(state.meta.moves, move); select.setAttribute('aria-label', `Party ${index+1} move ${slot+1}`); select.addEventListener('change', () => { mon.moves[slot] = select.value; dirty(); }); moves.append(select); }); fields.append(field('Moves · four slots', moves, true)); }
