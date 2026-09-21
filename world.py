@@ -235,7 +235,7 @@ class World:
             valid = local_id < counts[bank]
             attr = attributes[bank][local_id] if valid else 0
             behavior, layer_type = attr & 255, attr >> 12
-            metadata.append({'id': metatile_id, 'behavior': behavior, 'layer_type': layer_type,
+            metadata.append({'id': metatile_id, 'attribute': attr, 'behavior': behavior, 'layer_type': layer_type,
                              'behavior_name': behavior_names[behavior] if behavior < len(behavior_names) else str(behavior), 'valid': valid})
             if not valid:
                 continue
@@ -250,7 +250,8 @@ class World:
                 q = i % 4
                 result.alpha_composite(tile(descriptor), ((q % 2) * 8, (q // 2) * 8))
             atlas.paste(result, ((metatile_id % 16) * 16, (metatile_id // 16) * 16))
-        result = (atlas, {'count': count, 'columns': 16, 'tile_size': 16, 'primary_count': counts[0],
+        revision = hashlib.sha256(b''.join(signature)).hexdigest()
+        result = (atlas, {'count': count, 'columns': 16, 'tile_size': 16, 'primary_count': counts[0], 'revision': revision,
                           'secondary_count': counts[1], 'metatiles': metadata})
         # A bounded cache avoids retaining every tileset variant after external edits.
         if len(self._atlas_cache) >= 80:
@@ -491,7 +492,7 @@ class World:
                 raise ValueError('Invalid connection direction')
             integer(connection.get('offset'), -32768, 32767, 'Connection offset')
 
-    def plan_save(self, name, body):
+    def plan_save(self, name, body, pixel_planner=None):
         if not isinstance(body, dict):
             raise ValueError('Map edit must be an object')
         current = self.get_map(name)
@@ -523,6 +524,20 @@ class World:
         for i, value in enumerate(cells + border):
             if (value & 1023) not in valid_ids and (i >= len(old_values) or old_values[i] != value or layout != old_layout):
                 raise ValueError(f'Metatile {value & 1023} does not exist in this tileset pair')
+        patches = body.get('pixel_patches', {})
+        if not isinstance(patches, dict):
+            raise ValueError('Pixel patches must be an object keyed by map cell index')
+        owns_pixel_plan = False
+        if patches:
+            if any(layout[key] != old_layout[key] for key in ('primary_tileset', 'secondary_tileset')):
+                raise ValueError('Save tileset changes before cutting or moving pixel pieces')
+            if body.get('tileset_revision') != metadata['revision']:
+                raise ValueError('Tile artwork changed since it was opened. Reload before saving pixel pieces.')
+            if pixel_planner is None:
+                from world_pixels import PixelPatchPlanner
+                pixel_planner = PixelPatchPlanner(self)
+                owns_pixel_plan = True
+            cells = pixel_planner.compose(layout['primary_tileset'], layout['secondary_tileset'], cells, patches)
         changed_layout = cells != current['cells'] or border != current['border'] or layout != old_layout
         if changed_layout and current['shared_with'] and body.get('confirm_shared') is not True:
             raise ValueError('This layout is shared. Confirm shared changes to update: ' + ', '.join(current['shared_with']))
@@ -578,6 +593,8 @@ class World:
             layouts = self._json(LAYOUTS)
             layouts['layouts'] = [layout if item['id'] == layout['id'] else item for item in layouts['layouts']]
             plan[LAYOUTS] = json_bytes(layouts)
+        if owns_pixel_plan:
+            plan.update(pixel_planner.plan())
         return plan
 
     def plan_new(self, name, template='LittlerootTown', width=20, height=20):

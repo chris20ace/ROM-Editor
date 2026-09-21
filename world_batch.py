@@ -37,12 +37,12 @@ file are rejected, rather than choosing one map's version or merging silently.
         names.add(name)
 
     merged, owners = {}, {}
-    for body in bodies:
-        name = body["name"]
-        try:
-            plan = world.plan_save(name, body)
-        except ValueError as error:
-            raise ValueError(f"Cannot save {name}: {error}") from error
+    pixel_planner = None
+    if any(body.get('pixel_patches') for body in bodies):
+        from world_pixels import PixelPatchPlanner
+        pixel_planner = PixelPatchPlanner(world)
+
+    def merge_plan(plan, name):
         if not isinstance(plan, dict):
             raise ValueError(f"Map {name} returned an invalid source plan")
         for path, content in plan.items():
@@ -57,4 +57,14 @@ file are rejected, rather than choosing one map's version or merging silently.
                 raise ValueError(f"Maps {owners[path]} and {name} propose different contents for shared file {path}. Reconcile those edits before saving.")
             merged[path] = content
             owners.setdefault(path, name)
+
+    for body in bodies:
+        name = body["name"]
+        try:
+            plan = world.plan_save(name, body, pixel_planner=pixel_planner) if body.get('pixel_patches') else world.plan_save(name, body)
+        except ValueError as error:
+            raise ValueError(f"Cannot save {name}: {error}") from error
+        merge_plan(plan, name)
+    if pixel_planner is not None:
+        merge_plan(pixel_planner.plan(), 'pixel pieces')
     return merged

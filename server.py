@@ -446,6 +446,8 @@ class Handler(BaseHTTPRequestHandler):
                       '/connections': 'connections.html', '/connections.js': 'connections.js', '/connections.css': 'connections.css',
                       '/areas': 'areas.html', '/areas.js': 'areas.js', '/areas.css': 'areas.css',
                       '/worldmap': 'worldmap.html', '/worldmap.js': 'worldmap.js', '/worldmap.css': 'worldmap.css',
+                      '/tile-selection.js': 'tile-selection.js', '/tile-move.js': 'tile-move.js',
+                      '/worldmap-selection.js': 'worldmap-selection.js',
                       '/player': 'player.html', '/player.js': 'player.js', '/player.css': 'player.css',
                       '/worldtools.js': 'worldtools.js', '/worldtools.css': 'worldtools.css'}
             if request.path in static:

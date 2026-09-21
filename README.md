@@ -35,6 +35,12 @@ The workbench runs at **http://127.0.0.1:8765**. Choose the workspace for what y
 
 On the world canvas, **Edit story, settings & more** opens these tools in a panel for the selected place. Switch tools or choose **Back to world** without losing unsaved forms. Save inside each editor; returning to the world refreshes saved source changes.
 
+To move terrain on the world canvas, choose **Move tiles (M)**, drag a rectangle, then drag inside it. Whole tiles move with their collision and elevation; people and events stay in place. The source area is filled with the selected eraser tile and retains its previous collision and elevation; use Movement to change those after moving a wall or building.
+
+To cut terrain, select it and choose **Cut line (C)**. Draw a freehand or diagonal line from edge to edge, or draw a closed loop. The pieces are highlighted separately: click and drag the piece you want to move, at individual-pixel precision. **Esc** deselects, **Delete** erases the selection, and **Ctrl Z / Ctrl Shift Z** undo and redo. Partial tiles retain the destination behavior, collision, and elevation; edit walkability in Movement. Pieces can move between maps using the same tilesets.
+
+**Save world** turns pixel pieces into new secondary tiles and metatiles, preserving the original artwork. The save checks the game's graphics capacity, existing palettes, drawing layers, and animation references first. Cuts that cannot be represented exactly are rejected before any files change, with an explanation; the pending edit remains available to undo or revise. Many interior tilesets already have no free slots. Cutting an animated fragment does not create a new animation.
+
 Saving updates the corresponding files in `source/pokeemerald/` and backs up previous contents under `.workbench/`. Pokémon species data, names, evolutions, learnsets and Pokémon graphics are protected from Workbench writes. Choosing a species for a starter, trainer team or encounter uses the existing Pokémon.
 
 Read **[GAME_ATLAS.md](GAME_ATLAS.md)** for the system-by-system breakdown, file locations, editing methods, and three small experiments.
@@ -56,7 +62,7 @@ To give a new NPC dialogue, select it in World studio, choose **Write conversati
 
 Story conditions, cutscenes, badges, rewards, shops, special travel and other custom behavior are still written in the source scripts or engine code. Changing the starters does not automatically rewrite rival teams, gifts or story references. Editing a leader's battle does not rewrite that gym's puzzle or badge script. Region-map painting does not automatically move Fly destinations or map connections.
 
-The map editor uses the game's existing tilesets and object catalog. Player appearance can be redrawn directly in the player editor, keeping the original frame sizes and order. New terrain artwork and other sprites need a palette-aware graphics tool; MIDI arrangements need an audio tool. The source explorer is available for deeper logic changes.
+The map editor uses the game's existing tilesets and object catalog. Player appearance can be redrawn directly in the player editor, keeping the original frame sizes and order. Freehand cuts rearrange existing terrain pixels; drawing entirely new terrain artwork and other sprites needs a palette-aware graphics tool; MIDI arrangements need an audio tool. The source explorer is available for deeper logic changes.
 
 ## Saving source is not building a game
 
