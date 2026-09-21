@@ -15,6 +15,9 @@
       for(const name of selected)if(!included(map(name)))selected.delete(name);
       const arranging=S.tool==='arrange',working=S.busy||S.finishing,count=selected.size;
       $('#map-box-options').hidden=!active();
+      $('#expand-map').disabled=!S.ready||working||!!S.drag||!map();
+      $('#combine-map-boxes').hidden=!arranging;
+      $('#combine-map-boxes').disabled=!S.ready||working||!!S.drag||count<2;
       $('#map-box-hint').textContent=S.tool==='splitmap'
         ? 'Split the whole route: draw a straight line across its box, or choose Split in half.'
         : marqueeReady?'Drag a rectangle around map boxes. Shift adds to the group.'
@@ -187,7 +190,7 @@
     $('#split-midpoint').onclick=()=>split();$('#undo-map-move').onclick=undoMove;
     $('#select-map-boxes').onclick=()=>{if(!active()||S.tool!=='arrange'||S.busy||S.finishing||S.drag)return;marqueeReady=!marqueeReady;sync();render();};
     $('#clear-map-selection').onclick=clearSelection;
-    return {load,sync,active,pointerDown,pointerMove,finish,cancel,draw,split,focusMap,hasOverride:name=>!!positions[name],
+    return {selectionNames:()=>selectedRows().map(row=>row.name),positionRevision:()=>revision,load,sync,active,pointerDown,pointerMove,finish,cancel,draw,split,focusMap,hasOverride:name=>!!positions[name],
       key(event){if(event.key!=='Escape'||!active()||S.busy||S.finishing)return false;if(cancel()){event.preventDefault();return true;}if(S.tool==='arrange'&&selected.size){clearSelection();event.preventDefault();return true;}return false;}};
   }
 })(typeof globalThis!=='undefined'?globalThis:this);

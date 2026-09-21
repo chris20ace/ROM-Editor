@@ -452,6 +452,7 @@ class Handler(BaseHTTPRequestHandler):
                       '/worldmap': 'worldmap.html', '/worldmap.js': 'worldmap.js', '/worldmap.css': 'worldmap.css',
                       '/tile-selection.js': 'tile-selection.js', '/tile-move.js': 'tile-move.js',
                       '/worldmap-selection.js': 'worldmap-selection.js', '/worldmap-boxes.js': 'worldmap-boxes.js',
+                      '/worldmap-shapes.js': 'worldmap-shapes.js',
                       '/player': 'player.html', '/player.js': 'player.js', '/player.css': 'player.css',
                       '/worldtools.js': 'worldtools.js', '/worldtools.css': 'worldtools.css'}
             if request.path in static:
@@ -518,6 +519,13 @@ class Handler(BaseHTTPRequestHandler):
                 from world_positions import WorldPositions
                 with self.project.lock:
                     result = WorldPositions(self.project.root).save(body, self.project.world._maps())
+            elif self.path in ('/api/worldmap/expand/preview', '/api/worldmap/expand',
+                               '/api/worldmap/merge/preview', '/api/worldmap/merge'):
+                from world_reshape import WorldReshaper
+                with self.project.lock:
+                    kind = self.path.split('/')[3]
+                    reshaper = WorldReshaper(self.project)
+                    result = reshaper.preview(kind, body) if self.path.endswith('/preview') else reshaper.commit(kind, body)
             elif self.path in ('/api/worldmap/split/preview', '/api/worldmap/split'):
                 from route_split import RouteSplitter
                 with self.project.lock:
@@ -555,8 +563,8 @@ class Handler(BaseHTTPRequestHandler):
                     result = {**Region(self.project.source).get(), 'transaction': saved['id'], 'message': saved['message']}
             elif self.path == '/api/transaction/undo':
                 with self.project.lock:
-                    result = self.project.transactions.undo(body.get('id'))
-                    self.project.refresh(result['files'])
+                    from world_reshape import WorldReshaper
+                    result = WorldReshaper(self.project).undo(body.get('id'))
             else:
                 return self.respond(404, {'error': 'Not found.'})
             self.respond(200, result)

@@ -36,15 +36,21 @@ class AreasTests(unittest.TestCase):
         path.write_text(json.dumps(data), encoding="utf-8")
         return path
 
-    def test_every_original_map_belongs_to_exactly_one_area(self):
+    def test_every_source_map_belongs_to_exactly_one_area(self):
         all_names = [row["name"] for area in self.catalog["areas"] for row in area["maps"]]
         expected = {path.parent.name for path in (SOURCE / "data/maps").glob("*/map.json")}
-        self.assertEqual(len(all_names), 518)
-        self.assertEqual(self.catalog["map_count"], 518)
+        self.assertEqual(len(all_names), len(expected))
+        self.assertEqual(self.catalog["map_count"], len(expected))
         self.assertEqual(len(all_names), len(set(all_names)))
         self.assertEqual(set(all_names), expected)
-        self.assertEqual(sum(area["kind"] == "town" for area in self.catalog["areas"]), 16)
-        self.assertEqual(sum(area["kind"] == "route" for area in self.catalog["areas"]), 34)
+        # The working source is editable: split or combined maps change its
+        # inventory. Verify the canonical areas that still exist, while keeping
+        # custom places covered by the same exact-once assertions above.
+        original_routes = {f"Route{i}" for i in range(101, 135)}
+        self.assertEqual({area["id"] for area in self.catalog["areas"]
+                          if area["kind"] == "town" and area["id"] in TOWNS}, set(TOWNS) & expected)
+        self.assertEqual({area["id"] for area in self.catalog["areas"]
+                          if area["kind"] == "route" and area["id"] in original_routes}, original_routes & expected)
         for area in self.catalog["areas"]:
             self.assertEqual(area["count"], len(area["maps"]))
             if area["exterior"]:
@@ -137,8 +143,10 @@ class AreasTests(unittest.TestCase):
         self.assertEqual(humanize("Route104_PrototypePrettyPetalFlowerShop"), "Route 104 · Prototype Pretty Petal Flower Shop")
         self.assertEqual(humanize("PokemonCenter_2F"), "Pokémon Center · 2F")
         self.assertEqual(humanize("SSTidal"), "S.S. Tidal")
-        routes = [a["id"] for a in self.catalog["areas"] if a["kind"] == "route"]
-        self.assertEqual(routes, [f"Route{i}" for i in range(101,135)])
+        original_routes = [f"Route{i}" for i in range(101, 135)]
+        routes = [a["id"] for a in self.catalog["areas"]
+                  if a["kind"] == "route" and a["id"] in original_routes]
+        self.assertEqual(routes, [name for name in original_routes if name in self.maps])
 
     def test_shared_event_cycles_are_reported_without_source_writes(self):
         root = self.fixture()

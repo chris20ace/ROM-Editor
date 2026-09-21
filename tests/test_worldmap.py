@@ -268,7 +268,7 @@ class WorldMapTests(unittest.TestCase):
         rows = self.rows(catalog)
         expected = {path.parent.name for path in (SOURCE / 'data/maps').glob('*/map.json')}
         self.assertEqual(len(rows), len(expected))
-        self.assertGreaterEqual(len(rows), 518)
+        self.assertTrue(rows)
         self.assertEqual(set(rows), expected)
         self.assertEqual({row['area_kind'] for row in rows.values()}, {'town', 'route', 'dungeon', 'special'})
         for name in ('Underwater_Route124', 'SecretBase_RedCave1', 'VictoryRoad_B1F', 'ContestHallBeauty', 'BattlePyramidSquare01'):
@@ -290,12 +290,38 @@ class WorldMapTests(unittest.TestCase):
     def test_real_shelves_and_detached_components_do_not_overlap_and_fit_landscape(self):
         catalog = WorldMap(SOURCE).catalog()
         self.assertGreater(catalog['bounds']['width'], catalog['bounds']['height'])
-        self.assertEqual(catalog['initial_bounds'], {'x': 0, 'y': 0, 'width': 800, 'height': 383})
         sections = {section['id']: section for section in catalog['sections']}
-        self.assertEqual(set(sections), {'main', 'town', 'route', 'dungeon', 'special'})
-        self.assertEqual(len(sections['main']['names']), 49)
-        self.assertGreater(sections['town']['bounds']['x'], sections['main']['bounds']['x'])
-        self.assertEqual(sections['town']['bounds']['y'], 0)
+        self.assertEqual(set(sections), {'main'} | {group['kind'] for group in catalog['groups']})
+        # A split adds a map and a combination removes one. Derive connected
+        # coverage from the current source edges instead of Emerald's old count.
+        source_maps = {path.parent.name: json.loads(path.read_bytes())
+                       for path in (SOURCE / 'data/maps').glob('*/map.json')}
+        ids = {data['id']: name for name, data in source_maps.items()}
+        neighbors = {name: set() for name in source_maps}
+        for name, data in source_maps.items():
+            for link in data.get('connections') or []:
+                target = ids.get(link.get('map'))
+                if target and link.get('direction') in {'up', 'down', 'left', 'right'} and type(link.get('offset')) is int:
+                    neighbors[name].add(target)
+                    neighbors[target].add(name)
+        seed = 'LittlerootTown' if 'LittlerootTown' in source_maps else sections['main']['names'][0]
+        expected, pending = set(), [seed]
+        while pending:
+            name = pending.pop()
+            if name not in expected:
+                expected.add(name)
+                pending.extend(neighbors[name] - expected)
+        self.assertEqual(set(sections['main']['names']), expected)
+        self.assertEqual(len(sections['main']['names']), len(expected))
+        rows = self.rows(catalog)
+        bounds = {'x': min(rows[name]['x'] for name in expected), 'y': min(rows[name]['y'] for name in expected)}
+        bounds['width'] = max(rows[name]['x'] + rows[name]['width'] for name in expected) - bounds['x']
+        bounds['height'] = max(rows[name]['y'] + rows[name]['height'] for name in expected) - bounds['y']
+        self.assertEqual(catalog['initial_bounds'], bounds)
+        self.assertEqual((bounds['x'], bounds['y']), (0, 0))
+        if 'town' in sections:
+            self.assertGreater(sections['town']['bounds']['x'], sections['main']['bounds']['x'])
+            self.assertEqual(sections['town']['bounds']['y'], 0)
         for collection in (catalog['components'], catalog['sections'], catalog['groups']):
             for index, left in enumerate(collection):
                 a = left['bounds']

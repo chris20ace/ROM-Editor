@@ -22,3 +22,5 @@
 .map-box-options button[aria-pressed="true"]{background:#c8e3e8;border-color:#78a5af;color:#184f60}
 .tile-selection-options select{max-width:145px;padding:5px;font-size:10px}
 .tools button[data-tool="select"] span,.tools button[data-tool="arrange"] span,.tools button[data-tool="move"] span{display:inline}
+
+.tools #expand-map span{display:inline}.reshape-warning{border-left:3px solid #d4b36f;padding-left:10px}.reshape-encounters{margin-top:14px}#reshape-size-warning{color:#a04c37}
