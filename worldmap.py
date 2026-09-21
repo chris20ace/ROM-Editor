@@ -1,8 +1,9 @@
 """Every source map on one terrain canvas, without source writes.
 
-Complete source maps are joined only where all original offsets agree and no
-terrain overlaps. Separate sections stay on this canvas, with explicit travel
-links between them. Rooms and floors are packed by area; spacing is not travel.
+Each connected component uses real metatile coordinates. Detached interiors,
+floors and other maps are packed by area; those offsets do not imply travel links.
+Inconsistent source cycles use the fewest practical display breaks; every
+unsatisfied source connection and overlapping rectangle is exposed to the UI.
 """
 from collections import Counter, deque
 import math
@@ -10,7 +11,6 @@ import re
 
 from areas import Areas
 from connections import Connections, OPPOSITE
-from worldmap_sections import partition_maps
 
 
 OUTDOOR_TYPES = frozenset({'MAP_TYPE_TOWN', 'MAP_TYPE_CITY', 'MAP_TYPE_ROUTE', 'MAP_TYPE_OCEAN_ROUTE'})
@@ -59,6 +59,88 @@ def _delta(direction, offset, source_size, target_size):
     raise ValueError('Expected a cardinal map connection.')
 
 
+def _improve_component_positions(names, positions, dimensions, maps, edges):
+    """Reduce arbitrary BFS seams without changing a single source constraint.
+
+    Emerald's local connections need not close in a flat global embedding. A
+    breadth-first traversal can spread one contradictory offset over several
+    distant town boundaries. Try leaving individual constraints out of placement
+    (never out of validation), and keep only a strictly better arrangement.
+    Reciprocal connection records are one physical constraint. Bridge omissions
+    are rejected, so a connected world can never be split into display shelves.
+    """
+    members = set(names)
+    constraints = {}
+    for a, b, _direction, _offset, dx, dy in edges:
+        if a not in members or b not in members:
+            continue
+        if a > b:
+            a, b, dx, dy = b, a, -dx, -dy
+        key = (a, b, dx, dy)
+        constraints.setdefault(key, (a, b, dx, dy))
+    if not constraints:
+        return
+    ordered = sorted(constraints)
+    adjacency = {name: [] for name in names}
+    for key in ordered:
+        a, b, dx, dy = constraints[key]
+        adjacency[a].append((b, dx, dy, key))
+        adjacency[b].append((a, -dx, -dy, key))
+
+    def score(candidate):
+        conflicts, town_seams, distance = 0, 0, 0
+        for a, b, dx, dy in constraints.values():
+            ax, ay = candidate[a]
+            bx, by = candidate[b]
+            ex, ey = bx - ax - dx, by - ay - dy
+            if ex or ey:
+                conflicts += 1
+                town_seams += any(maps[name].get('map_type') in {'MAP_TYPE_TOWN', 'MAP_TYPE_CITY'} for name in (a, b))
+                distance += abs(ex) + abs(ey)
+        overlap_area = 0
+        for index, a in enumerate(names):
+            ax, ay = candidate[a]
+            aw, ah = dimensions[a]
+            for b in names[index + 1:]:
+                bx, by = candidate[b]
+                bw, bh = dimensions[b]
+                width = min(ax + aw, bx + bw) - max(ax, bx)
+                height = min(ay + ah, by + bh) - max(ay, by)
+                if width > 0 and height > 0:
+                    overlap_area += width * height
+        return conflicts, town_seams, overlap_area, distance
+
+    current = {name: positions[name] for name in names}
+    current_score = score(current)
+    if current_score[0] == 0:
+        return  # Preserve exact placement for already consistent components.
+    omitted = frozenset()
+    while True:
+        best, best_score, best_omitted = None, current_score, omitted
+        for excluded in ordered:
+            if excluded in omitted:
+                continue
+            trial_omitted = omitted | {excluded}
+            candidate = {names[0]: (0, 0)}
+            queue = deque([names[0]])
+            while queue:
+                name = queue.popleft()
+                x, y = candidate[name]
+                for target, dx, dy, key in adjacency[name]:
+                    if key not in trial_omitted and target not in candidate:
+                        candidate[target] = (x + dx, y + dy)
+                        queue.append(target)
+            if len(candidate) != len(names):
+                continue
+            candidate_score = score(candidate)
+            if candidate_score < best_score:
+                best, best_score, best_omitted = candidate, candidate_score, trial_omitted
+        if best is None:
+            break
+        current, current_score, omitted = best, best_score, best_omitted
+    positions.update(current)
+
+
 class WorldMap:
     def __init__(self, source):
         self.connections = Connections(source)
@@ -86,7 +168,6 @@ class WorldMap:
             dimensions[name] = (width, height)
 
         adjacency = {name: [] for name in maps}
-        cardinal_connections = {name: [] for name in maps}
         edges = []
         for name, data in maps.items():
             for connection in data.get('connections') or []:
@@ -102,10 +183,6 @@ class WorldMap:
                 if type(offset) is not int:
                     warnings.append(f'{name} has an invalid connection offset to {target}.')
                     continue
-                # Preserve the original direction and offset for section links
-                # and same-canvas navigation, independently of display spacing.
-                cardinal_connections[name].append({'map': connection['map'], 'name': target,
-                                                    'direction': direction, 'offset': offset})
                 dx, dy = _delta(direction, offset, dimensions[name], dimensions[target])
                 adjacency[name].append((target, dx, dy))
                 # A one-way walking edge still constrains the physical arrangement.
@@ -141,16 +218,8 @@ class WorldMap:
                 label = _human_name(seed) + (' area' if len(names) > 1 else '')
             components.append({'id': seed, 'names': names, 'label': label, 'archived': archived})
 
-        original_components = components
-        components = []
-        for original in original_components:
-            pieces = partition_maps(original['names'], dimensions, edges)
-            for index, piece in enumerate(pieces):
-                names = piece['names']
-                positions.update(piece['positions'])
-                components.append({'id': original['id'] if index == 0 else original['id'] + ':' + names[0],
-                                   'names': names, 'label': original['label'], 'archived': original['archived'],
-                                   'source_component': original['id']})
+        for component in components:
+            _improve_component_positions(component['names'], positions, dimensions, maps, edges)
 
         def translate(component, target_x, target_y):
             bounds = _bounds(component['names'], positions, dimensions)
@@ -160,26 +229,15 @@ class WorldMap:
                 positions[name] = (x + shift_x, y + shift_y)
             component['bounds'] = _bounds(component['names'], positions, dimensions)
 
-        # All pieces of the original main component remain next to each other.
-        # Their gutters are explicit editor spacing, never stretched terrain.
-        main_source = next((component for component in original_components if 'LittlerootTown' in component['names']), None)
-        if main_source is None and original_components:
-            main_source = max(original_components, key=lambda component: len(component['names']))
-        main_parts = [component for component in components
-                      if main_source and component['source_component'] == main_source['id']]
-        main = dict(main_source) if main_source else None
-        if main_parts:
-            sizes = [_bounds(part['names'], positions, dimensions) for part in main_parts]
-            target_width = max(800, max(box['width'] for box in sizes))
-            cursor_x, cursor_y, row_height = 0, 0, 0
-            for part, box in zip(main_parts, sizes):
-                if cursor_x and cursor_x + box['width'] > target_width:
-                    cursor_x, cursor_y, row_height = 0, cursor_y + row_height + COMPONENT_GAP, 0
-                translate(part, cursor_x, cursor_y)
-                cursor_x += box['width'] + COMPONENT_GAP
-                row_height = max(row_height, box['height'])
-            main['bounds'] = _bounds(main['names'], positions, dimensions)
-        detached = [component for component in components if component not in main_parts]
+        # Hoenn anchors the main canvas. Everything else receives one rigid
+        # component translation into four category shelves.
+        # Even a custom connection between different areas keeps its geometry.
+        main = next((component for component in components if 'LittlerootTown' in component['names']), None)
+        if main is None and components:
+            main = max(components, key=lambda component: len(component['names']))
+        if main:
+            translate(main, 0, 0)
+        detached = [component for component in components if component is not main]
         cluster_components = {}
         for component in detached:
             owners = Counter(map_metadata[name]['area_id'] for name in component['names'])
@@ -214,13 +272,9 @@ class WorldMap:
 
         canvas_width = max([800, main['bounds']['width'] if main else 0] + [group['bounds']['width'] for group in groups])
         sections = []
-        for index, part in enumerate(main_parts):
-            towns = [name for name in part['names'] if maps[name].get('map_type') in {'MAP_TYPE_TOWN', 'MAP_TYPE_CITY'}]
-            landmarks = towns[:3] or part['names'][:2]
-            part['label'] = ' / '.join(_human_name(name) for name in landmarks)
-            sections.append({'id': 'main' if index == 0 else 'main:' + part['id'], 'kind': 'main',
-                             'label': 'Map section · ' + part['label'], 'bounds': part['bounds'],
-                             'names': part['names'], 'group_ids': []})
+        if main:
+            sections.append({'id': 'main', 'kind': 'main', 'label': main['label'] + ' · Connected world',
+                             'bounds': main['bounds'], 'names': main['names'], 'group_ids': []})
         shelf_y = (main['bounds']['height'] if main else 0) + COMPONENT_GAP
         for kind, label in SECTION_LABELS.items():
             category_groups = [group for group in groups if group['kind'] == kind]
@@ -250,7 +304,7 @@ class WorldMap:
         column_bottoms = [(main['bounds']['height'] + COMPONENT_GAP) if main else 0, 0]
         category_column = {'town': 1, 'route': 0, 'dungeon': 1, 'special': 0}
         for section in sections:
-            if section['kind'] == 'main':
+            if section['id'] == 'main':
                 continue
             column = category_column[section['kind']]
             target_x, target_y = column * (canvas_width + COMPONENT_GAP), column_bottoms[column]
@@ -265,41 +319,22 @@ class WorldMap:
             section['bounds'] = _bounds(section['names'], positions, dimensions)
             column_bottoms[column] = target_y + section['bounds']['height'] + COMPONENT_GAP
 
-        components = main_parts + [component for group in groups for component in group['_components']]
+        components = ([main] if main else []) + [component for group in groups for component in group['_components']]
         group_by_map = {name: group['id'] for group in groups for name in group['names']}
         for group in groups:
             del group['_components']
 
-        component_by_map = {name: component['id'] for component in components for name in component['names']}
-        transitions, conflicts, seen_conflicts = [], [], set()
+        conflicts, seen_conflicts = [], set()
         for a, b, direction, offset, dx, dy in edges:
             expected = (positions[a][0] + dx, positions[a][1] + dy)
             actual = positions[b]
             if actual == expected:
                 continue
-            # Reciprocal records represent the same physical connection.
+            # Reciprocal records represent the same unsatisfied seam.
             key = (a, b, direction, offset) if a <= b else (b, a, OPPOSITE[direction], -offset)
             if key in seen_conflicts:
                 continue
             seen_conflicts.add(key)
-            if component_by_map[a] != component_by_map[b]:
-                vertical = direction in {'left', 'right'}
-                size_index = 1 if vertical else 0
-                start = max(0, offset)
-                end = min(dimensions[a][size_index], offset + dimensions[b][size_index])
-                middle = (start + end) / 2
-                aw, ah = dimensions[a]
-                bw, bh = dimensions[b]
-                source_point = {'left': (0, middle), 'right': (aw, middle),
-                                'up': (middle, 0), 'down': (middle, ah)}[direction]
-                target_point = {'left': (bw, middle - offset), 'right': (0, middle - offset),
-                                'up': (middle - offset, bh), 'down': (middle - offset, 0)}[direction]
-                transitions.append({'id': 'link-' + str(len(transitions) + 1), 'a': a, 'b': b,
-                                    'direction': direction, 'offset': offset, 'span': max(0, end - start),
-                                    'from_component': component_by_map[a], 'to_component': component_by_map[b],
-                                    'source': {'x': positions[a][0] + source_point[0], 'y': positions[a][1] + source_point[1]},
-                                    'target': {'x': positions[b][0] + target_point[0], 'y': positions[b][1] + target_point[1]}})
-                continue
             conflicts.append({'a': a, 'b': b, 'direction': direction, 'offset': offset,
                               'expected': {'x': expected[0], 'y': expected[1]},
                               'actual': {'x': actual[0], 'y': actual[1]},
@@ -332,17 +367,16 @@ class WorldMap:
                                'component': component['id'], 'archived': component['archived'],
                                **map_metadata[name], 'group': group_by_map.get(name),
                                'is_outdoor': data.get('map_type') in OUTDOOR_TYPES or name in OUTDOOR_EXCEPTIONS,
-                               'connections': cardinal_connections[name],
                                'overlaps': sorted(map_overlaps[name]),
                                'preview_url': f'/api/world/maps/{name}/preview.png'})
-        if conflicts or overlaps:
-            raise ValueError('Map sections must have exact internal connections and no hidden terrain.')
-        if transitions:
-            warnings.append(f'{len(transitions)} original connections link separate map sections. Follow their labels on the canvas; the source travel links are unchanged.')
+        if conflicts:
+            warnings.append(f'{len(conflicts)} map connection seams disagree around map cycles. The canvas reduces these display breaks while preserving town boundaries where possible; no source connections were changed.')
+        if overlaps:
+            warnings.append(f'{len(overlaps)} map rectangles overlap. Select the map you want to edit to bring its terrain forward.')
         if len(components) > 1:
             warnings.append('Rooms, floors, underwater maps and other detached areas are grouped by place around the main world. Display spacing does not create travel connections.')
         bounds = _bounds(list(maps), positions, dimensions)
         return {'revision': snapshot['revision'], 'maps': result, 'components': components, 'groups': groups,
                 'sections': sections, 'bounds': bounds,
-                'initial_bounds': main['bounds'] if main else bounds,
-                'transitions': transitions, 'conflicts': conflicts, 'overlaps': overlaps, 'warnings': warnings}
+                'initial_bounds': components[0]['bounds'] if components else bounds,
+                'conflicts': conflicts, 'overlaps': overlaps, 'warnings': warnings}
