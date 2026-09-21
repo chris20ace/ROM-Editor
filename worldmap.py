@@ -168,6 +168,7 @@ class WorldMap:
             dimensions[name] = (width, height)
 
         adjacency = {name: [] for name in maps}
+        cardinal_connections = {name: [] for name in maps}
         edges = []
         for name, data in maps.items():
             for connection in data.get('connections') or []:
@@ -183,6 +184,11 @@ class WorldMap:
                 if type(offset) is not int:
                     warnings.append(f'{name} has an invalid connection offset to {target}.')
                     continue
+                # Preserve the source direction and offset independently of
+                # the global arrangement. A focused neighborhood can show
+                # these exact local joins even when a world cycle cannot close.
+                cardinal_connections[name].append({'map': connection['map'], 'name': target,
+                                                    'direction': direction, 'offset': offset})
                 dx, dy = _delta(direction, offset, dimensions[name], dimensions[target])
                 adjacency[name].append((target, dx, dy))
                 # A one-way walking edge still constrains the physical arrangement.
@@ -367,6 +373,7 @@ class WorldMap:
                                'component': component['id'], 'archived': component['archived'],
                                **map_metadata[name], 'group': group_by_map.get(name),
                                'is_outdoor': data.get('map_type') in OUTDOOR_TYPES or name in OUTDOOR_EXCEPTIONS,
+                               'connections': cardinal_connections[name],
                                'overlaps': sorted(map_overlaps[name]),
                                'preview_url': f'/api/world/maps/{name}/preview.png'})
         if conflicts:

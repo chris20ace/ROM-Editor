@@ -69,6 +69,27 @@ class WorldMapTests(unittest.TestCase):
         self.assertEqual(len(catalog['components']), 1)
         self.assertEqual(rows['Route']['y'] + 9, rows['LittlerootTown']['y'])
         self.assertEqual(rows['Route']['x'] + 4, rows['LittlerootTown']['x'])
+        # Original records are exposed exactly, without inventing a reciprocal
+        # source link. Consumers can find incoming edges by scanning these rows.
+        self.assertEqual(rows['Route']['connections'], [
+            {'map': 'MAP_LITTLEROOTTOWN', 'name': 'LittlerootTown', 'direction': 'down', 'offset': 4}])
+        self.assertEqual(rows['LittlerootTown']['connections'], [])
+
+    def test_catalog_connections_include_only_known_integer_cardinal_source_records(self):
+        self.add_map('East', 12, 12)
+        self.links('LittlerootTown', [('East', 'right', -3), ('East', 'dive', 0),
+                                    ('Missing', 'up', 0), ('East', 'left', '2'),
+                                    ('East', 'down', True)])
+        before = {str(path): path.read_bytes() for path in self.source.rglob('*') if path.is_file()}
+        catalog = self.model.catalog()
+        rows = self.rows(catalog)
+        self.assertEqual(rows['LittlerootTown']['connections'], [
+            {'map': 'MAP_EAST', 'name': 'East', 'direction': 'right', 'offset': -3}])
+        self.assertEqual(rows['East']['connections'], [])
+        self.assertEqual((rows['East']['x'] - rows['LittlerootTown']['x'],
+                          rows['East']['y'] - rows['LittlerootTown']['y']), (20, -3))
+        self.assertEqual(catalog['conflicts'], [])
+        self.assertEqual(before, {str(path): path.read_bytes() for path in self.source.rglob('*') if path.is_file()})
 
     def test_includes_interiors_underwater_named_exteriors_and_new_outdoors(self):
         self.add_map('House', map_type='MAP_TYPE_INDOOR')
@@ -171,6 +192,28 @@ class WorldMapTests(unittest.TestCase):
         self.assertIn('LittlerootTown_BrendansHouse_1F', rows)
         self.assertIn('FarawayIsland_Interior', rows)
         self.assertTrue(rows['Route104_Prototype']['archived'])
+        self.assertEqual(rows['Route103']['connections'], [
+            {'map': 'MAP_OLDALE_TOWN', 'name': 'OldaleTown', 'direction': 'down', 'offset': 0},
+            {'map': 'MAP_ROUTE110', 'name': 'Route110', 'direction': 'right', 'offset': -60}])
+        self.assertIn({'map': 'MAP_ROUTE103', 'name': 'Route103', 'direction': 'left', 'offset': 60},
+                      rows['Route110']['connections'])
+        self.assertIn({'map': 'MAP_ROUTE103', 'name': 'Route103', 'direction': 'up', 'offset': 0},
+                      rows['OldaleTown']['connections'])
+        self.assertEqual((rows['Route103']['width'], rows['Route103']['height']), (80, 22))
+        self.assertFalse(any('projection' in row for row in rows.values()))
+
+    def test_all_real_catalog_connections_match_source_without_synthetic_return_edges(self):
+        catalog = WorldMap(SOURCE).catalog()
+        rows = self.rows(catalog)
+        names = {row['id']: name for name, row in rows.items()}
+        for name, row in rows.items():
+            source = json.loads((SOURCE / 'data/maps' / name / 'map.json').read_bytes())
+            expected = [{'map': connection['map'], 'name': names[connection['map']],
+                         'direction': connection['direction'], 'offset': connection['offset']}
+                        for connection in source.get('connections') or []
+                        if connection['direction'] in {'up', 'down', 'left', 'right'}
+                        and connection['map'] in names and type(connection['offset']) is int]
+            self.assertEqual(row['connections'], expected, name)
 
     def test_real_town_coastlines_and_routes_use_source_offsets_and_keep_only_one_display_break(self):
         source_paths = [SOURCE / 'data/maps' / name / 'map.json' for name in

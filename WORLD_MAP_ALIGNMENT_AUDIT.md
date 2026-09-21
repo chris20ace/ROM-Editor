@@ -69,3 +69,7 @@ Primary references:
 - [Ruby Route 103 connections](https://github.com/pret/pokeruby/blob/master/data/maps/Route103/map.json)
 
 This investigation leaves map geometry, connections, terrain, sprites, and the ROM unchanged. The rejected display projection remains removed. A future implementation must distinguish map-local connections from a world overview and must not silently stretch, trim, overlap, or relocate terrain to claim a seamless original world.
+
+## Editor correction after the audit
+
+The canvas now offers an explicit **Connected view** using a selected map and its immediate neighbors at the original connection offsets. Route 103 / Route 110 can be edited in that aligned view with full rectangular grids and no terrain transformation or source change. Buffers and Undo history are shared with **World overview**, which still contains every map. The local editing fix does not claim the original global loop is geometrically consistent.
